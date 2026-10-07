@@ -1,0 +1,65 @@
+name: Deploy Production
+
+on:
+  workflow_run:
+    workflows: ["Deploy Staging"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PRODUCTION_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.PRODUCTION_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Copy deployment files
+        run: |
+          scp docker-compose.prod.yml nginx/nginx.conf \
+            "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}:/opt/team-c/"
+
+          scp -r database monitoring scripts \
+            "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}:/opt/team-c/"
+
+      - name: Deploy exact staging image SHA
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          ssh "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}" \
+            "sudo chown -R deployer:deployer /opt/team-c"
+
+          ssh "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}" "cat > /opt/team-c/.env <<EOF
+          POSTGRES_DB=taskdb
+          POSTGRES_USER=taskuser
+          POSTGRES_PASSWORD=${{ secrets.PRODUCTION_DB_PASSWORD }}
+          BACKEND_IMAGE=${DOCKERHUB_USERNAME}/team-c-backend:${{ github.event.workflow_run.head_sha }}
+          FRONTEND_IMAGE=${DOCKERHUB_USERNAME}/team-c-frontend:${{ github.event.workflow_run.head_sha }}
+          GRAFANA_ADMIN_USER=admin
+          GRAFANA_ADMIN_PASSWORD=${{ secrets.PRODUCTION_GRAFANA_PASSWORD }}
+          ALERTMANAGER_WEBHOOK_URL=${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
+          EOF"
+
+          ssh "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}" \
+            "cd /opt/team-c && sudo docker compose -f docker-compose.prod.yml pull && sudo docker compose -f docker-compose.prod.yml up -d"
+
+      - name: Production health check
+        run: |
+          for i in {1..20}; do
+            if curl --fail --silent "http://${{ secrets.PRODUCTION_HOST }}/api/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1

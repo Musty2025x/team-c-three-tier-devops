@@ -1,0 +1,24 @@
+groups:
+  - name: application
+    rules:
+      - alert: APIHealthDown
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Team C API is down"
+          description: "Prometheus cannot scrape the backend metrics endpoint."
+
+      - alert: HighAPIErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_requests_total[5m])), 0.001)
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API error rate above 10%"
