@@ -3,95 +3,98 @@ name: Deploy Staging
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  REGISTRY: docker.io
-  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/team-c-backend
-  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/team-c-frontend
+  BACKEND_IMAGE: musty101/team-c-backend
+  FRONTEND_IMAGE: musty101/team-c-frontend
 
 jobs:
-  build-push:
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: meta
-        run: echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push backend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          push: true
-          tags: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-
-      - name: Build and push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          push: true
-          tags: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
-
   deploy:
-    needs: build-push
+    name: Deploy to staging
     runs-on: ubuntu-latest
-    environment: staging
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.STAGING_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Copy deployment files
-        run: |
-          scp docker-compose.prod.yml nginx/nginx.conf \
-            "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_HOST }}:/opt/team-c/"
-
-          scp -r database monitoring scripts \
-            "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_HOST }}:/opt/team-c/"
-
-      - name: Deploy
+      - name: Deploy to staging
+        uses: appleboy/ssh-action@v1.2.0
         env:
+          IMAGE_TAG: ${{ github.sha }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        run: |
-          ssh "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_HOST }}" \
-            "sudo chown -R deployer:deployer /opt/team-c"
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: true
+          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+          script: |
+            set -e
 
-          ssh "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_HOST }}" "cat > /opt/team-c/.env <<EOF
-          POSTGRES_DB=taskdb
-          POSTGRES_USER=taskuser
-          POSTGRES_PASSWORD=${{ secrets.STAGING_DB_PASSWORD }}
-          BACKEND_IMAGE=${DOCKERHUB_USERNAME}/team-c-backend:${{ github.sha }}
-          FRONTEND_IMAGE=${DOCKERHUB_USERNAME}/team-c-frontend:${{ github.sha }}
-          GRAFANA_ADMIN_USER=admin
-          GRAFANA_ADMIN_PASSWORD=${{ secrets.STAGING_GRAFANA_PASSWORD }}
-          ALERTMANAGER_WEBHOOK_URL=${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
-          EOF"
+            sudo mkdir -p /opt/team-c/releases/${IMAGE_TAG}
+            sudo chown -R deployer:deployer /opt/team-c
 
-          ssh "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_HOST }}" \
-            "cd /opt/team-c && sudo docker compose -f docker-compose.prod.yml pull && sudo docker compose -f docker-compose.prod.yml up -d"
+            cd /opt/team-c/releases/${IMAGE_TAG}
 
-      - name: Health check
-        run: |
-          for i in {1..20}; do
-            if curl --fail --silent "http://${{ secrets.STAGING_HOST }}/api/health"; then
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
+            cat > docker-compose.yml <<EOF
+            services:
+              backend:
+                image: ${DOCKERHUB_USERNAME}/team-c-backend:${IMAGE_TAG}
+                restart: unless-stopped
+                environment:
+                  PORT: 5000
+                  DATABASE_URL: postgresql://teamc:teamc@postgres:5432/teamc
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+
+              frontend:
+                image: ${DOCKERHUB_USERNAME}/team-c-frontend:${IMAGE_TAG}
+                restart: unless-stopped
+                depends_on:
+                  - backend
+
+              postgres:
+                image: postgres:16-alpine
+                restart: unless-stopped
+                environment:
+                  POSTGRES_USER: teamc
+                  POSTGRES_PASSWORD: teamc
+                  POSTGRES_DB: teamc
+                volumes:
+                  - postgres_data:/var/lib/postgresql/data
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U teamc -d teamc"]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 5
+
+            volumes:
+              postgres_data:
+            EOF
+
+            echo "${DOCKERHUB_TOKEN}" | docker login \
+              -u "${DOCKERHUB_USERNAME}" \
+              --password-stdin
+
+            docker compose pull
+            docker compose up -d
+
+            docker image prune -f
+
+            echo "Waiting for application..."
+            sleep 15
+
+            docker compose ps
+
+            echo "Checking backend health..."
+            docker compose exec -T backend \
+              wget -qO- http://localhost:5000/api/health
+
+            echo ""
+            echo "Staging deployment successful."
