@@ -53,7 +53,7 @@ app.get("/api/health", async (_req, res) => {
       service: "team-c-api",
       database: "connected"
     });
-  } catch (error) {
+  } catch {
     res.status(503).json({
       status: "error",
       database: "unavailable"
