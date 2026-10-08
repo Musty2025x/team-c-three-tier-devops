@@ -1,24 +1,25 @@
 groups:
-  - name: application
+  - name: team-c-alerts
     rules:
-      - alert: APIHealthDown
+      - alert: BackendDown
         expr: up{job="backend"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Team C API is down"
-          description: "Prometheus cannot scrape the backend metrics endpoint."
+          summary: Team C backend is down
+          description: The Team C backend has been unavailable for more than one minute.
 
-      - alert: HighAPIErrorRate
+      - alert: HighErrorRate
         expr: |
           (
-            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+            rate(http_requests_total{status=~"5.."}[5m])
             /
-            clamp_min(sum(rate(http_requests_total[5m])), 0.001)
-          ) > 0.10
+            rate(http_requests_total[5m])
+          ) > 0.05
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "API error rate above 10%"
+          summary: High HTTP error rate
+          description: More than 5 percent of requests are returning 5xx responses.

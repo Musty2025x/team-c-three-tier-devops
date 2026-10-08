@@ -1,65 +1,66 @@
 name: Deploy Production
 
 on:
-  workflow_run:
-    workflows: ["Deploy Staging"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Commit SHA/image tag to deploy
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+env:
+  BACKEND_IMAGE: musty101/team-c-backend
+  FRONTEND_IMAGE: musty101/team-c-frontend
+
 jobs:
-  production:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+  deploy:
+    name: Deploy to production
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify production Compose file
+        run: test -f docker-compose.prod.yml
+      - name: Copy production Compose file
+        uses: appleboy/scp-action@v0.1.7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.PRODUCTION_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.PRODUCTION_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Copy deployment files
-        run: |
-          scp docker-compose.prod.yml nginx/nginx.conf \
-            "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}:/opt/team-c/"
-
-          scp -r database monitoring scripts \
-            "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}:/opt/team-c/"
-
-      - name: Deploy exact staging image SHA
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          source: docker-compose.prod.yml
+          target: /tmp/team-c-production
+      - name: Deploy to production
+        uses: appleboy/ssh-action@v1.2.0
         env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        run: |
-          ssh "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}" \
-            "sudo chown -R deployer:deployer /opt/team-c"
-
-          ssh "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}" "cat > /opt/team-c/.env <<EOF
-          POSTGRES_DB=taskdb
-          POSTGRES_USER=taskuser
-          POSTGRES_PASSWORD=${{ secrets.PRODUCTION_DB_PASSWORD }}
-          BACKEND_IMAGE=${DOCKERHUB_USERNAME}/team-c-backend:${{ github.event.workflow_run.head_sha }}
-          FRONTEND_IMAGE=${DOCKERHUB_USERNAME}/team-c-frontend:${{ github.event.workflow_run.head_sha }}
-          GRAFANA_ADMIN_USER=admin
-          GRAFANA_ADMIN_PASSWORD=${{ secrets.PRODUCTION_GRAFANA_PASSWORD }}
-          ALERTMANAGER_WEBHOOK_URL=${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
-          EOF"
-
-          ssh "${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }}" \
-            "cd /opt/team-c && sudo docker compose -f docker-compose.prod.yml pull && sudo docker compose -f docker-compose.prod.yml up -d"
-
-      - name: Production health check
-        run: |
-          for i in {1..20}; do
-            if curl --fail --silent "http://${{ secrets.PRODUCTION_HOST }}/api/health"; then
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script_stop: true
+          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+          script: |
+            set -e
+            RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
+            sudo mkdir -p "${RELEASE_DIR}"
+            sudo chown -R deployer:deployer /opt/team-c
+            sudo cp /tmp/team-c-production/docker-compose.prod.yml "${RELEASE_DIR}/docker-compose.prod.yml"
+            sudo chown deployer:deployer "${RELEASE_DIR}/docker-compose.prod.yml"
+            printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\n' "${IMAGE_TAG}" "${DOCKERHUB_USERNAME}" | sudo tee "${RELEASE_DIR}/.env" > /dev/null
+            sudo chown deployer:deployer "${RELEASE_DIR}/.env"
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.prod.yml" config
+            echo "${DOCKERHUB_TOKEN}" | sudo -u deployer docker login --username "${DOCKERHUB_USERNAME}" --password-stdin
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.prod.yml" pull
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.prod.yml" up -d
+            sleep 20
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.prod.yml" ps
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.prod.yml" exec -T backend wget -qO- http://localhost:5000/api/health
+            echo ""
+            echo "PRODUCTION DEPLOYMENT SUCCESSFUL"

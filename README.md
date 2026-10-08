@@ -113,6 +113,7 @@ Open:
 - API health: http://localhost/api/health
 - Metrics: http://localhost/api/metrics
 - Prometheus: http://localhost:9090
+- Alertmanager: http://localhost:9093
 - Grafana: http://localhost:3000
 
 Default local Grafana credentials:
@@ -234,7 +235,7 @@ terraform {
   backend "s3" {
     bucket = "YOUR-UNIQUE-TERRAFORM-STATE-BUCKET"
     key    = "team-c/terraform.tfstate"
-    region = "eu-west-1"
+    region = "us-east-1"
     encrypt = true
   }
 }

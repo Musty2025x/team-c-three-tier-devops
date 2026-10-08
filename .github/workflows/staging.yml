@@ -2,7 +2,8 @@ name: Deploy Staging
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -16,20 +17,19 @@ jobs:
   deploy:
     name: Deploy to staging
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Copy deployment files
+      - name: Verify deployment file
+        run: test -f deploy/staging/docker-compose.yml
+      - name: Copy deployment file
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          source: "deploy/staging/docker-compose.yml"
-          target: "/tmp/team-c-deploy"
-
+          source: deploy/staging/docker-compose.yml
+          target: /tmp/team-c-deploy
       - name: Deploy to staging
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -42,59 +42,21 @@ jobs:
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
           envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
-
           script: |
             set -e
-
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
-
-            sudo mkdir -p "$RELEASE_DIR"
+            sudo mkdir -p "${RELEASE_DIR}"
             sudo chown -R deployer:deployer /opt/team-c
-
-            sudo cp /tmp/team-c-deploy/deploy/staging/docker-compose.yml \
-              "$RELEASE_DIR/docker-compose.yml"
-
-            sudo chown deployer:deployer \
-              "$RELEASE_DIR/docker-compose.yml"
-
-            sudo -u deployer env \
-              IMAGE_TAG="$IMAGE_TAG" \
-              DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME" \
-              docker compose \
-              -f "$RELEASE_DIR/docker-compose.yml" \
-              config
-
-            echo "${DOCKERHUB_TOKEN}" | sudo -u deployer docker login \
-              --username "${DOCKERHUB_USERNAME}" \
-              --password-stdin
-
-            sudo -u deployer env \
-              IMAGE_TAG="$IMAGE_TAG" \
-              DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME" \
-              docker compose \
-              -f "$RELEASE_DIR/docker-compose.yml" \
-              pull
-
-            sudo -u deployer env \
-              IMAGE_TAG="$IMAGE_TAG" \
-              DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME" \
-              docker compose \
-              -f "$RELEASE_DIR/docker-compose.yml" \
-              up -d
-
-            echo "Waiting for application..."
+            sudo cp /tmp/team-c-deploy/deploy/staging/docker-compose.yml "${RELEASE_DIR}/docker-compose.yml"
+            sudo chown deployer:deployer "${RELEASE_DIR}/docker-compose.yml"
+            printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\n' "${IMAGE_TAG}" "${DOCKERHUB_USERNAME}" | sudo tee "${RELEASE_DIR}/.env" > /dev/null
+            sudo chown deployer:deployer "${RELEASE_DIR}/.env"
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" config
+            echo "${DOCKERHUB_TOKEN}" | sudo -u deployer docker login --username "${DOCKERHUB_USERNAME}" --password-stdin
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" pull
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" up -d
             sleep 15
-
-            sudo -u deployer docker compose \
-              -f "$RELEASE_DIR/docker-compose.yml" \
-              ps
-
-            echo "Checking backend health..."
-
-            sudo -u deployer docker compose \
-              -f "$RELEASE_DIR/docker-compose.yml" \
-              exec -T backend \
-              wget -qO- http://localhost:5000/api/health
-
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" ps
+            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" exec -T backend wget -qO- http://localhost:5000/api/health
             echo ""
-            echo "Staging deployment successful."
+            echo "STAGING DEPLOYMENT SUCCESSFUL"

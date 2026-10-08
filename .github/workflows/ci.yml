@@ -1,28 +1,28 @@
-```yaml
 name: CI
 
 on:
   pull_request:
+    branches:
+      - main
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
 
 env:
-  BACKEND_IMAGE: musty101/team-c-three-tier-backend
-  FRONTEND_IMAGE: musty101/team-c-three-tier-frontend
+  BACKEND_IMAGE: musty101/team-c-backend
+  FRONTEND_IMAGE: musty101/team-c-frontend
 
 jobs:
   test:
     name: Lint, test and dependency scan
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -30,60 +30,42 @@ jobs:
           cache-dependency-path: |
             backend/package-lock.json
             frontend/package-lock.json
-
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
-
       - name: Backend lint
         working-directory: backend
         run: npm run lint
-
       - name: Backend tests
         working-directory: backend
         run: npm test
-
       - name: Backend dependency audit
         working-directory: backend
         run: npm audit --audit-level=high
-
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-
       - name: Frontend lint
         working-directory: frontend
         run: npm run lint
-
       - name: Frontend build
         working-directory: frontend
         run: npm run build
-
       - name: Frontend dependency audit
         working-directory: frontend
         run: npm audit --audit-level=high
 
   security:
-    name: Build and scan container images
+    name: Trivy security scan
     runs-on: ubuntu-latest
     needs: test
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Build backend image
-        run: |
-          docker build \
-            -t ${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
-            ./backend
-
+        run: docker build -t "${BACKEND_IMAGE}:${GITHUB_SHA}" ./backend
       - name: Build frontend image
-        run: |
-          docker build \
-            -t ${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
-            ./frontend
-
+        run: docker build -t "${FRONTEND_IMAGE}:${GITHUB_SHA}" ./frontend
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -92,51 +74,45 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: 1
           ignore-unfixed: true
-
       - name: Trivy backend image scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          image-ref: "${{ env.BACKEND_IMAGE }}:${{ github.sha }}"
           severity: CRITICAL,HIGH
           exit-code: 1
           ignore-unfixed: true
-
       - name: Trivy frontend image scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          image-ref: "${{ env.FRONTEND_IMAGE }}:${{ github.sha }}"
           severity: CRITICAL,HIGH
           exit-code: 1
           ignore-unfixed: true
 
-  push-images:
-    name: Push images to Docker Hub
+  build-and-push:
+    name: Build and push images
     runs-on: ubuntu-latest
     needs: security
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Build backend image
-        run: |
-          docker build \
-            -t ${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
-            ./backend
-
-      - name: Build frontend image
-        run: |
-          docker build \
-            -t ${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
-            ./frontend
-
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Push backend image
-        run: |
-          docker push ${{ env.BACKEND
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}

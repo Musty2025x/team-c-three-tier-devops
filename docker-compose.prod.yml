@@ -3,96 +3,55 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: teamc
+      POSTGRES_PASSWORD: teamc
+      POSTGRES_DB: teamc
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
+      test:
+        - CMD-SHELL
+        - pg_isready -U teamc -d teamc
+      interval: 10s
       timeout: 5s
-      retries: 10
-    networks: [app]
+      retries: 5
 
   backend:
-    image: ${BACKEND_IMAGE}
+    image: ${DOCKERHUB_USERNAME}/team-c-backend:${IMAGE_TAG}
     restart: unless-stopped
     environment:
       PORT: 5000
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql://teamc:teamc@postgres:5432/teamc
     depends_on:
       postgres:
         condition: service_healthy
-    expose: ["5000"]
-    networks: [app]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://localhost:5000/api/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   frontend:
-    image: ${FRONTEND_IMAGE}
+    image: ${DOCKERHUB_USERNAME}/team-c-frontend:${IMAGE_TAG}
     restart: unless-stopped
-    expose: ["80"]
-    networks: [app]
+    depends_on:
+      backend:
+        condition: service_healthy
 
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - frontend
-      - backend
-    networks: [app, monitoring]
-
-  node-exporter:
-    image: prom/node-exporter:v1.9.1
-    command: ['--path.rootfs=/host']
-    volumes:
-      - '/:/host:ro,rslave'
-    restart: unless-stopped
-    networks: [monitoring]
-
-  prometheus:
-    image: prom/prometheus:v3.5.0
-    restart: unless-stopped
-    volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
-    ports: ["9090:9090"]
-    networks: [monitoring, app]
-
-  alertmanager:
-    image: prom/alertmanager:v0.28.1
-    restart: unless-stopped
-    command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--config.expand-env'
-    environment:
-      ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL}
-    volumes:
-      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-    ports: ["9093:9093"]
-    networks: [monitoring]
-
-  grafana:
-    image: grafana/grafana:12.1.1
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports: ["3000:3000"]
-    networks: [monitoring]
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
-  grafana_data:
-
-networks:
-  app:
-  monitoring:

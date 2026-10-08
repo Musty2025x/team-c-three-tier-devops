@@ -1,20 +1,4 @@
 services:
-  backend:
-    image: ${DOCKERHUB_USERNAME}/team-c-backend:${IMAGE_TAG}
-    restart: unless-stopped
-    environment:
-      PORT: 5000
-      DATABASE_URL: postgresql://teamc:teamc@postgres:5432/teamc
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  frontend:
-    image: ${DOCKERHUB_USERNAME}/team-c-frontend:${IMAGE_TAG}
-    restart: unless-stopped
-    depends_on:
-      - backend
-
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -25,10 +9,36 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U teamc -d teamc"]
+      test:
+        - CMD-SHELL
+        - pg_isready -U teamc -d teamc
       interval: 10s
       timeout: 5s
       retries: 5
+
+  backend:
+    image: ${DOCKERHUB_USERNAME}/team-c-backend:${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      PORT: 5000
+      DATABASE_URL: postgresql://teamc:teamc@postgres:5432/teamc
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://localhost:5000/api/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/team-c-frontend:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
