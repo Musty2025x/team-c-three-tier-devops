@@ -1,11 +1,18 @@
 name: Deploy Staging
 
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
 
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag / Git commit SHA to deploy"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,17 +26,39 @@ jobs:
     name: Deploy to Staging
     runs-on: ubuntu-latest
 
+    # Only deploy when CI succeeds on main.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+
     steps:
-      # -----------------------------
-      # Checkout
-      # -----------------------------
+      # --------------------------------
+      # Checkout exact commit that CI built
+      # --------------------------------
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      # -----------------------------
+      # --------------------------------
+      # Set image tag
+      # --------------------------------
+
+      - name: Set deployment image tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+          else
+            echo "IMAGE_TAG=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          fi
+
+      # --------------------------------
       # Verify deployment file
-      # -----------------------------
+      # --------------------------------
 
       - name: Verify staging Compose file
         run: |
@@ -39,9 +68,9 @@ jobs:
 
           echo "Staging Compose file found."
 
-      # -----------------------------
+      # --------------------------------
       # Copy Compose file to EC2
-      # -----------------------------
+      # --------------------------------
 
       - name: Copy staging Compose file
         uses: appleboy/scp-action@v0.1.7
@@ -52,14 +81,14 @@ jobs:
           source: deploy/staging/docker-compose.yml
           target: /tmp/team-c-deploy
 
-      # -----------------------------
-      # Deploy
-      # -----------------------------
+      # --------------------------------
+      # Deploy to staging
+      # --------------------------------
 
       - name: Deploy to staging
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
@@ -77,7 +106,7 @@ jobs:
             echo "Starting staging deployment"
             echo "=========================================="
 
-            echo "Commit SHA:"
+            echo "Image tag:"
             echo "${IMAGE_TAG}"
 
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
@@ -114,7 +143,7 @@ jobs:
               "${RELEASE_DIR}/.env"
 
             # --------------------------------
-            # Show deployment configuration
+            # Validate Compose
             # --------------------------------
 
             echo "Validating Docker Compose configuration..."
@@ -136,7 +165,7 @@ jobs:
                 --password-stdin
 
             # --------------------------------
-            # Verify images exist
+            # Pull exact CI-built images
             # --------------------------------
 
             echo "Pulling application images..."
@@ -158,7 +187,7 @@ jobs:
               up -d
 
             # --------------------------------
-            # Wait for containers
+            # Wait for application
             # --------------------------------
 
             echo "Waiting for application to start..."
@@ -166,7 +195,7 @@ jobs:
             sleep 20
 
             # --------------------------------
-            # Show container status
+            # Container status
             # --------------------------------
 
             echo "Container status:"
