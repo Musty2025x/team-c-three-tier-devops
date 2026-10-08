@@ -8,48 +8,108 @@ function App() {
   const [status, setStatus] = useState("Checking API...");
 
   async function loadTasks() {
-    const health = await fetch("/api/health");
-    if (!health.ok) throw new Error("API unavailable");
-    setStatus("API healthy");
-    const response = await fetch("/api/tasks");
-    setTasks(await response.json());
+    try {
+      const health = await fetch("/api/health");
+
+      if (!health.ok) {
+        throw new Error("API unavailable");
+      }
+
+      const response = await fetch("/api/tasks");
+
+      if (!response.ok) {
+        throw new Error("Failed to load tasks");
+      }
+
+      const data = await response.json();
+
+      setTasks(data);
+      setStatus("API healthy");
+    } catch {
+      setStatus("API unavailable");
+    }
   }
 
   useEffect(() => {
-    loadTasks().catch(() => setStatus("API unavailable"));
+    loadTasks();
   }, []);
 
   async function addTask(event) {
     event.preventDefault();
-    if (!title.trim()) return;
 
-    await fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title })
-    });
+    if (!title.trim()) {
+      return;
+    }
 
-    setTitle("");
-    await loadTasks();
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ title })
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to add task");
+      }
+
+      setTitle("");
+      await loadTasks();
+    } catch {
+      setStatus("API unavailable");
+    }
   }
 
   async function toggleTask(id) {
-    await fetch(`/api/tasks/${id}`, { method: "PATCH" });
-    await loadTasks();
+    try {
+      const response = await fetch(`/api/tasks/${id}`, {
+        method: "PATCH"
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update task");
+      }
+
+      await loadTasks();
+    } catch {
+      setStatus("API unavailable");
+    }
   }
 
   async function deleteTask(id) {
-    await fetch(`/api/tasks/${id}`, { method: "DELETE" });
-    await loadTasks();
+    try {
+      const response = await fetch(`/api/tasks/${id}`, {
+        method: "DELETE"
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete task");
+      }
+
+      await loadTasks();
+    } catch {
+      setStatus("API unavailable");
+    }
   }
 
   return (
     <main className="container">
       <section className="hero">
         <p className="eyebrow">TEAM C · DEVOPS DEMO</p>
+
         <h1>TaskFlow</h1>
-        <p>React → Node.js → PostgreSQL, deployed through an automated AWS pipeline.</p>
-        <span className={status === "API healthy" ? "badge healthy" : "badge"}>
+
+        <p>
+          React → Node.js → PostgreSQL, deployed through an automated AWS
+          pipeline.
+        </p>
+
+        <span
+          className={
+            status === "API healthy" ? "badge healthy" : "badge"
+          }
+        >
           {status}
         </span>
       </section>
@@ -60,17 +120,30 @@ function App() {
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Add a deployment task..."
         />
+
         <button type="submit">Add task</button>
       </form>
 
       <section className="card">
         {tasks.map((task) => (
           <article className="task" key={task.id}>
-            <button className="check" onClick={() => toggleTask(task.id)}>
+            <button
+              className="check"
+              onClick={() => toggleTask(task.id)}
+            >
               {task.completed ? "✓" : "○"}
             </button>
-            <span className={task.completed ? "done" : ""}>{task.title}</span>
-            <button className="delete" onClick={() => deleteTask(task.id)}>Delete</button>
+
+            <span className={task.completed ? "done" : ""}>
+              {task.title}
+            </span>
+
+            <button
+              className="delete"
+              onClick={() => deleteTask(task.id)}
+            >
+              Delete
+            </button>
           </article>
         ))}
       </section>
