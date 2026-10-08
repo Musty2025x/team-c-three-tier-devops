@@ -68,11 +68,17 @@ jobs:
               --username "${DOCKERHUB_USERNAME}" \
               --password-stdin
 
-            sudo -u deployer docker compose \
+            sudo -u deployer env \
+              IMAGE_TAG="$IMAGE_TAG" \
+              DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME" \
+              docker compose \
               -f "$RELEASE_DIR/docker-compose.yml" \
               pull
 
-            sudo -u deployer docker compose \
+            sudo -u deployer env \
+              IMAGE_TAG="$IMAGE_TAG" \
+              DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME" \
+              docker compose \
               -f "$RELEASE_DIR/docker-compose.yml" \
               up -d
 
