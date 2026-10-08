@@ -26,7 +26,8 @@ jobs:
     name: Deploy to Staging
     runs-on: ubuntu-latest
 
-    # Only deploy when CI succeeds on main.
+    # Automatically deploy only when CI succeeds on main.
+    # Also allow manual deployment through workflow_dispatch.
     if: >
       github.event_name == 'workflow_dispatch' ||
       (
@@ -35,6 +36,7 @@ jobs:
       )
 
     steps:
+
       # --------------------------------
       # Checkout exact commit that CI built
       # --------------------------------
@@ -45,28 +47,36 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # --------------------------------
-      # Set image tag
+      # Set deployment image tag
       # --------------------------------
 
       - name: Set deployment image tag
         run: |
+          set -e
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
           else
             echo "IMAGE_TAG=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
           fi
 
+          echo "Deployment image tag set."
+
       # --------------------------------
-      # Verify deployment file
+      # Verify deployment files
       # --------------------------------
 
-      - name: Verify staging Compose file
+      - name: Verify staging deployment files
         run: |
           set -e
 
+          echo "Checking staging Compose file..."
           test -f deploy/staging/docker-compose.yml
 
-          echo "Staging Compose file found."
+          echo "Checking Nginx configuration..."
+          test -f nginx/nginx.conf
+
+          echo "Staging deployment files found successfully."
 
       # --------------------------------
       # Copy Compose file to EC2
@@ -82,11 +92,25 @@ jobs:
           target: /tmp/team-c-deploy
 
       # --------------------------------
+      # Copy Nginx configuration to EC2
+      # --------------------------------
+
+      - name: Copy Nginx configuration
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          source: nginx/nginx.conf
+          target: /tmp/team-c-nginx
+
+      # --------------------------------
       # Deploy to staging
       # --------------------------------
 
       - name: Deploy to staging
         uses: appleboy/ssh-action@v1.2.0
+
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -115,6 +139,8 @@ jobs:
             # Create release directory
             # --------------------------------
 
+            echo "Creating release directory..."
+
             sudo mkdir -p "${RELEASE_DIR}"
 
             sudo chown -R deployer:deployer /opt/team-c
@@ -123,16 +149,47 @@ jobs:
             # Copy Compose file
             # --------------------------------
 
+            echo "Copying Docker Compose file..."
+
             sudo cp \
               /tmp/team-c-deploy/deploy/staging/docker-compose.yml \
               "${RELEASE_DIR}/docker-compose.yml"
 
+            # --------------------------------
+            # Copy Nginx configuration
+            # --------------------------------
+
+            echo "Copying Nginx configuration..."
+
+            sudo cp \
+              /tmp/team-c-nginx/nginx.conf \
+              "${RELEASE_DIR}/nginx.conf"
+
+            # --------------------------------
+            # Set file ownership
+            # --------------------------------
+
             sudo chown deployer:deployer \
-              "${RELEASE_DIR}/docker-compose.yml"
+              "${RELEASE_DIR}/docker-compose.yml" \
+              "${RELEASE_DIR}/nginx.conf"
+
+            # --------------------------------
+            # Verify deployment files
+            # --------------------------------
+
+            echo "Checking deployment files..."
+
+            test -f "${RELEASE_DIR}/docker-compose.yml"
+            test -f "${RELEASE_DIR}/nginx.conf"
+
+            echo "Deployment files found:"
+            ls -lah "${RELEASE_DIR}"
 
             # --------------------------------
             # Create environment file
             # --------------------------------
+
+            echo "Creating environment file..."
 
             printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\n' \
               "${IMAGE_TAG}" \
@@ -143,43 +200,57 @@ jobs:
               "${RELEASE_DIR}/.env"
 
             # --------------------------------
-            # Validate Compose
+            # Validate Docker Compose
             # --------------------------------
 
-            echo "Validating Docker Compose configuration..."
+            echo "=========================================="
+            echo "Validating Docker Compose configuration"
+            echo "=========================================="
 
             sudo -u deployer docker compose \
               --env-file "${RELEASE_DIR}/.env" \
               -f "${RELEASE_DIR}/docker-compose.yml" \
               config
 
+            echo "Docker Compose configuration is valid."
+
             # --------------------------------
             # Login to Docker Hub
             # --------------------------------
 
-            echo "Logging into Docker Hub..."
+            echo "=========================================="
+            echo "Logging into Docker Hub"
+            echo "=========================================="
 
             echo "${DOCKERHUB_TOKEN}" \
               | sudo -u deployer docker login \
                 --username "${DOCKERHUB_USERNAME}" \
                 --password-stdin
 
+            echo "Docker Hub login successful."
+
             # --------------------------------
             # Pull exact CI-built images
             # --------------------------------
 
-            echo "Pulling application images..."
+            echo "=========================================="
+            echo "Pulling application images"
+            echo "=========================================="
 
             sudo -u deployer docker compose \
               --env-file "${RELEASE_DIR}/.env" \
               -f "${RELEASE_DIR}/docker-compose.yml" \
               pull
 
+            echo "Application images pulled successfully."
+
             # --------------------------------
             # Start application
             # --------------------------------
 
-            echo "Starting staging application..."
+            echo "=========================================="
+            echo "Starting staging application"
+            echo "=========================================="
 
             sudo -u deployer docker compose \
               --env-file "${RELEASE_DIR}/.env" \
@@ -198,7 +269,9 @@ jobs:
             # Container status
             # --------------------------------
 
-            echo "Container status:"
+            echo "=========================================="
+            echo "Container status"
+            echo "=========================================="
 
             sudo -u deployer docker compose \
               --env-file "${RELEASE_DIR}/.env" \
@@ -209,7 +282,9 @@ jobs:
             # Backend health check
             # --------------------------------
 
-            echo "Checking backend health..."
+            echo "=========================================="
+            echo "Checking backend health"
+            echo "=========================================="
 
             sudo -u deployer docker compose \
               --env-file "${RELEASE_DIR}/.env" \
@@ -219,6 +294,43 @@ jobs:
 
             echo ""
 
+            # --------------------------------
+            # Public application health check
+            # --------------------------------
+
+            echo "=========================================="
+            echo "Checking public application"
+            echo "=========================================="
+
+            curl --fail --silent --show-error \
+              --max-time 30 \
+              http://localhost/
+
+            echo ""
+
+            echo "Public frontend is responding."
+
+            # --------------------------------
+            # Public API health check
+            # --------------------------------
+
+            echo "Checking public API..."
+
+            curl --fail --silent --show-error \
+              --max-time 30 \
+              http://localhost/api/health
+
+            echo ""
+
+            echo "Public API is responding."
+
+            # --------------------------------
+            # Deployment successful
+            # --------------------------------
+
             echo "=========================================="
             echo "STAGING DEPLOYMENT SUCCESSFUL"
+            echo "=========================================="
+            echo "Image tag: ${IMAGE_TAG}"
+            echo "Release directory: ${RELEASE_DIR}"
             echo "=========================================="
