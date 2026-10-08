@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 permissions:
@@ -15,14 +16,34 @@ env:
 
 jobs:
   deploy:
-    name: Deploy to staging
+    name: Deploy to Staging
     runs-on: ubuntu-latest
+
     steps:
+      # -----------------------------
+      # Checkout
+      # -----------------------------
+
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Verify deployment file
-        run: test -f deploy/staging/docker-compose.yml
-      - name: Copy deployment file
+
+      # -----------------------------
+      # Verify deployment file
+      # -----------------------------
+
+      - name: Verify staging Compose file
+        run: |
+          set -e
+
+          test -f deploy/staging/docker-compose.yml
+
+          echo "Staging Compose file found."
+
+      # -----------------------------
+      # Copy Compose file to EC2
+      # -----------------------------
+
+      - name: Copy staging Compose file
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.STAGING_HOST }}
@@ -30,33 +51,145 @@ jobs:
           key: ${{ secrets.STAGING_SSH_KEY }}
           source: deploy/staging/docker-compose.yml
           target: /tmp/team-c-deploy
+
+      # -----------------------------
+      # Deploy
+      # -----------------------------
+
       - name: Deploy to staging
         uses: appleboy/ssh-action@v1.2.0
         env:
           IMAGE_TAG: ${{ github.sha }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
           envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+
           script: |
             set -e
+
+            echo "=========================================="
+            echo "Starting staging deployment"
+            echo "=========================================="
+
+            echo "Commit SHA:"
+            echo "${IMAGE_TAG}"
+
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
+
+            # --------------------------------
+            # Create release directory
+            # --------------------------------
+
             sudo mkdir -p "${RELEASE_DIR}"
+
             sudo chown -R deployer:deployer /opt/team-c
-            sudo cp /tmp/team-c-deploy/deploy/staging/docker-compose.yml "${RELEASE_DIR}/docker-compose.yml"
-            sudo chown deployer:deployer "${RELEASE_DIR}/docker-compose.yml"
-            printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\n' "${IMAGE_TAG}" "${DOCKERHUB_USERNAME}" | sudo tee "${RELEASE_DIR}/.env" > /dev/null
-            sudo chown deployer:deployer "${RELEASE_DIR}/.env"
-            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" config
-            echo "${DOCKERHUB_TOKEN}" | sudo -u deployer docker login --username "${DOCKERHUB_USERNAME}" --password-stdin
-            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" pull
-            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" up -d
-            sleep 15
-            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" ps
-            sudo -u deployer docker compose --env-file "${RELEASE_DIR}/.env" -f "${RELEASE_DIR}/docker-compose.yml" exec -T backend wget -qO- http://localhost:5000/api/health
+
+            # --------------------------------
+            # Copy Compose file
+            # --------------------------------
+
+            sudo cp \
+              /tmp/team-c-deploy/deploy/staging/docker-compose.yml \
+              "${RELEASE_DIR}/docker-compose.yml"
+
+            sudo chown deployer:deployer \
+              "${RELEASE_DIR}/docker-compose.yml"
+
+            # --------------------------------
+            # Create environment file
+            # --------------------------------
+
+            printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\n' \
+              "${IMAGE_TAG}" \
+              "${DOCKERHUB_USERNAME}" \
+              | sudo tee "${RELEASE_DIR}/.env" > /dev/null
+
+            sudo chown deployer:deployer \
+              "${RELEASE_DIR}/.env"
+
+            # --------------------------------
+            # Show deployment configuration
+            # --------------------------------
+
+            echo "Validating Docker Compose configuration..."
+
+            sudo -u deployer docker compose \
+              --env-file "${RELEASE_DIR}/.env" \
+              -f "${RELEASE_DIR}/docker-compose.yml" \
+              config
+
+            # --------------------------------
+            # Login to Docker Hub
+            # --------------------------------
+
+            echo "Logging into Docker Hub..."
+
+            echo "${DOCKERHUB_TOKEN}" \
+              | sudo -u deployer docker login \
+                --username "${DOCKERHUB_USERNAME}" \
+                --password-stdin
+
+            # --------------------------------
+            # Verify images exist
+            # --------------------------------
+
+            echo "Pulling application images..."
+
+            sudo -u deployer docker compose \
+              --env-file "${RELEASE_DIR}/.env" \
+              -f "${RELEASE_DIR}/docker-compose.yml" \
+              pull
+
+            # --------------------------------
+            # Start application
+            # --------------------------------
+
+            echo "Starting staging application..."
+
+            sudo -u deployer docker compose \
+              --env-file "${RELEASE_DIR}/.env" \
+              -f "${RELEASE_DIR}/docker-compose.yml" \
+              up -d
+
+            # --------------------------------
+            # Wait for containers
+            # --------------------------------
+
+            echo "Waiting for application to start..."
+
+            sleep 20
+
+            # --------------------------------
+            # Show container status
+            # --------------------------------
+
+            echo "Container status:"
+
+            sudo -u deployer docker compose \
+              --env-file "${RELEASE_DIR}/.env" \
+              -f "${RELEASE_DIR}/docker-compose.yml" \
+              ps
+
+            # --------------------------------
+            # Backend health check
+            # --------------------------------
+
+            echo "Checking backend health..."
+
+            sudo -u deployer docker compose \
+              --env-file "${RELEASE_DIR}/.env" \
+              -f "${RELEASE_DIR}/docker-compose.yml" \
+              exec -T backend \
+              wget -qO- http://localhost:5000/api/health
+
             echo ""
+
+            echo "=========================================="
             echo "STAGING DEPLOYMENT SUCCESSFUL"
+            echo "=========================================="
