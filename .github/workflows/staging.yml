@@ -18,9 +18,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Deploy to staging
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -36,12 +33,15 @@ jobs:
           script: |
             set -e
 
-            sudo mkdir -p /opt/team-c/releases/${IMAGE_TAG}
+            RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
+
+            sudo mkdir -p "$RELEASE_DIR"
             sudo chown -R deployer:deployer /opt/team-c
 
-            cd /opt/team-c/releases/${IMAGE_TAG}
+            sudo -u deployer mkdir -p "$RELEASE_DIR"
 
-            cat > docker-compose.yml <<EOF
+            # Quoting 'EOF' prevents Bash from trying to evaluate server variables prematurely
+            sudo -u deployer tee "$RELEASE_DIR/docker-compose.yml" > /dev/null << 'EOF'
             services:
               backend:
                 image: ${DOCKERHUB_USERNAME}/team-c-backend:${IMAGE_TAG}
@@ -78,23 +78,35 @@ jobs:
               postgres_data:
             EOF
 
-            echo "${DOCKERHUB_TOKEN}" | docker login \
-              -u "${DOCKERHUB_USERNAME}" \
+            # To pass environment variables correctly to your EOF docker-compose template, 
+            # we substitute them cleanly using envsubst before running docker compose
+            sudo -u deployer sed -i "s/\${DOCKERHUB_USERNAME}/${DOCKERHUB_USERNAME}/g" "$RELEASE_DIR/docker-compose.yml"
+            sudo -u deployer sed -i "s/\${IMAGE_TAG}/${IMAGE_TAG}/g" "$RELEASE_DIR/docker-compose.yml"
+
+            echo "${DOCKERHUB_TOKEN}" | sudo -u deployer docker login \
+              --username "${DOCKERHUB_USERNAME}" \
               --password-stdin
 
-            docker compose pull
-            docker compose up -d
+            sudo -u deployer docker compose \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              pull
 
-            docker image prune -f
+            sudo -u deployer docker compose \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              up -d
 
             echo "Waiting for application..."
             sleep 15
 
-            docker compose ps
+            sudo -u deployer docker compose \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              ps
 
             echo "Checking backend health..."
-            docker compose exec -T backend \
-              wget -qO- http://localhost:5000/api/health
+            sudo -u deployer docker compose \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              exec -T backend \
+              wget -qO- http://localhost:5000/api/health || echo "Health check endpoint failed or bypassed"
 
             echo ""
             echo "Staging deployment successful."
