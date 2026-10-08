@@ -18,6 +18,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy deployment files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          source: "deploy/staging/docker-compose.yml"
+          target: "/tmp/team-c-deploy"
+
       - name: Deploy to staging
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -30,6 +42,7 @@ jobs:
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
           envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+
           script: |
             set -e
 
@@ -38,50 +51,18 @@ jobs:
             sudo mkdir -p "$RELEASE_DIR"
             sudo chown -R deployer:deployer /opt/team-c
 
-            sudo -u deployer mkdir -p "$RELEASE_DIR"
+            sudo cp /tmp/team-c-deploy/deploy/staging/docker-compose.yml \
+              "$RELEASE_DIR/docker-compose.yml"
 
-            # Quoting 'EOF' prevents Bash from trying to evaluate server variables prematurely
-            sudo -u deployer tee "$RELEASE_DIR/docker-compose.yml" > /dev/null << 'EOF'
-            services:
-              backend:
-                image: ${DOCKERHUB_USERNAME}/team-c-backend:${IMAGE_TAG}
-                restart: unless-stopped
-                environment:
-                  PORT: 5000
-                  DATABASE_URL: postgresql://teamc:teamc@postgres:5432/teamc
-                depends_on:
-                  postgres:
-                    condition: service_healthy
+            sudo chown deployer:deployer \
+              "$RELEASE_DIR/docker-compose.yml"
 
-              frontend:
-                image: ${DOCKERHUB_USERNAME}/team-c-frontend:${IMAGE_TAG}
-                restart: unless-stopped
-                depends_on:
-                  - backend
-
-              postgres:
-                image: postgres:16-alpine
-                restart: unless-stopped
-                environment:
-                  POSTGRES_USER: teamc
-                  POSTGRES_PASSWORD: teamc
-                  POSTGRES_DB: teamc
-                volumes:
-                  - postgres_data:/var/lib/postgresql/data
-                healthcheck:
-                  test: ["CMD-SHELL", "pg_isready -U teamc -d teamc"]
-                  interval: 10s
-                  timeout: 5s
-                  retries: 5
-
-            volumes:
-              postgres_data:
-            EOF
-
-            # To pass environment variables correctly to your EOF docker-compose template, 
-            # we substitute them cleanly using envsubst before running docker compose
-            sudo -u deployer sed -i "s/\${DOCKERHUB_USERNAME}/${DOCKERHUB_USERNAME}/g" "$RELEASE_DIR/docker-compose.yml"
-            sudo -u deployer sed -i "s/\${IMAGE_TAG}/${IMAGE_TAG}/g" "$RELEASE_DIR/docker-compose.yml"
+            sudo -u deployer env \
+              IMAGE_TAG="$IMAGE_TAG" \
+              DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME" \
+              docker compose \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              config
 
             echo "${DOCKERHUB_TOKEN}" | sudo -u deployer docker login \
               --username "${DOCKERHUB_USERNAME}" \
@@ -103,10 +84,11 @@ jobs:
               ps
 
             echo "Checking backend health..."
+
             sudo -u deployer docker compose \
               -f "$RELEASE_DIR/docker-compose.yml" \
               exec -T backend \
-              wget -qO- http://localhost:5000/api/health || echo "Health check endpoint failed or bypassed"
+              wget -qO- http://localhost:5000/api/health
 
             echo ""
             echo "Staging deployment successful."
