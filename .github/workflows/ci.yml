@@ -95,7 +95,7 @@ jobs:
             ./frontend
 
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -104,7 +104,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy backend image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "${{ env.BACKEND_IMAGE }}:${{ github.sha }}"
           severity: CRITICAL,HIGH
@@ -112,7 +112,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy frontend image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "${{ env.FRONTEND_IMAGE }}:${{ github.sha }}"
           severity: CRITICAL,HIGH
