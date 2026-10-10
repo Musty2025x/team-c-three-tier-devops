@@ -257,6 +257,14 @@ jobs:
               exit 1
             fi
 
+            # Verify deployer user and docker group membership
+            echo "Verifying deployer user permissions..."
+            id deployer
+            groups deployer
+
+            # Verify docker socket permissions
+            ls -la /var/run/docker.sock || echo "Docker socket not found"
+
             # Do not print secret values in workflow logs.
             printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\nGRAFANA_ADMIN_PASSWORD=%s\n' \
               "$IMAGE_TAG" \
@@ -273,23 +281,23 @@ jobs:
             sudo -u deployer docker compose \
               --env-file "$RELEASE_DIR/.env" \
               -f "$RELEASE_DIR/docker-compose.yml" \
-              config -q
+              config -q || { echo "Docker Compose validation failed"; exit 1; }
 
             echo "$DOCKERHUB_TOKEN" | sudo -u deployer docker login \
               --username "$DOCKERHUB_USERNAME" \
-              --password-stdin
+              --password-stdin || { echo "Docker login failed"; exit 1; }
 
             echo "Pulling required images..."
             sudo -u deployer docker compose \
               --env-file "$RELEASE_DIR/.env" \
               -f "$RELEASE_DIR/docker-compose.yml" \
-              pull
+              pull || { echo "Docker image pull failed"; exit 1; }
 
             echo "Starting application and monitoring stack..."
             sudo -u deployer docker compose \
               --env-file "$RELEASE_DIR/.env" \
               -f "$RELEASE_DIR/docker-compose.yml" \
-              up -d --remove-orphans
+              up -d --remove-orphans || { echo "Docker Compose up failed"; exit 1; }
 
             echo "Waiting for services..."
             sleep 20
@@ -305,16 +313,16 @@ jobs:
               --env-file "$RELEASE_DIR/.env" \
               -f "$RELEASE_DIR/docker-compose.yml" \
               exec -T backend \
-              wget -qO- http://localhost:5000/api/health
+              wget -qO- http://localhost:5000/api/health || { echo "Backend health check failed"; exit 1; }
 
             echo ""
             echo "Checking public frontend..."
             curl --fail --silent --show-error --max-time 30 \
-              http://localhost/ >/dev/null
+              http://localhost/ >/dev/null || { echo "Frontend check failed"; exit 1; }
 
             echo "Checking public API..."
             curl --fail --silent --show-error --max-time 30 \
-              http://localhost/api/health
+              http://localhost/api/health || { echo "API health check failed"; exit 1; }
 
             echo ""
             echo "Checking Prometheus configuration..."
@@ -322,7 +330,7 @@ jobs:
               --env-file "$RELEASE_DIR/.env" \
               -f "$RELEASE_DIR/docker-compose.yml" \
               exec -T prometheus \
-              promtool check config /etc/prometheus/prometheus.yml
+              promtool check config /etc/prometheus/prometheus.yml || { echo "Prometheus config check failed"; exit 1; }
 
             echo ""
             echo "STAGING DEPLOYMENT SUCCESSFUL"
