@@ -121,7 +121,30 @@ jobs:
           source: monitoring-config.tar.gz
           target: /tmp/team-c-monitoring
 
-       # 8. Create deployer user if it doesn't exist.
+      # 7b. Configure passwordless sudo for deployment user
+      - name: Configure passwordless sudo
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -eu
+            
+            # Add current user to sudoers with passwordless access for required commands
+            SUDOERS_FILE="/etc/sudoers.d/github-deploy-$(whoami)"
+            
+            if [ ! -f "$SUDOERS_FILE" ]; then
+              echo "Configuring passwordless sudo for deployment commands..."
+              echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/useradd, /usr/sbin/usermod, /usr/sbin/groupadd, /usr/bin/mkdir, /usr/bin/cp, /usr/bin/tar, /usr/bin/chown, /usr/bin/chmod, /bin/chown, /bin/chmod" | sudo tee "$SUDOERS_FILE" >/dev/null
+              sudo chmod 440 "$SUDOERS_FILE"
+              echo "Sudoers configuration complete."
+            else
+              echo "Sudoers configuration already exists."
+            fi
+
+      # 8. Create deployer user if it doesn't exist.
       - name: Ensure deployer user exists
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -137,13 +160,13 @@ jobs:
               id deployer
             else
               echo "Creating deployer user..."
-              sudo useradd -m -s /bin/bash deployer
+              sudo useradd -m -s /bin/bash deployer || { echo "Failed to create deployer user"; exit 1; }
 
               if ! getent group docker >/dev/null; then
-                sudo groupadd docker
+                sudo groupadd docker || true
               fi
 
-              sudo usermod -aG docker deployer
+              sudo usermod -aG docker deployer || { echo "Failed to add deployer to docker group"; exit 1; }
               echo "SUCCESS: deployer user created."
               id deployer
             fi
@@ -208,11 +231,11 @@ jobs:
 
             echo "Release files prepared successfully."
 
-      # 9. Validate Compose and deploy the stack.
+      # 10. Validate Compose and deploy the stack.
       - name: Deploy application and monitoring
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE_TAG: ${{ steps.set_image_tag.outputs.image_tag }}
+          IMAGE_TAG: ${{ steps.set_image_image_tag.outputs.image_tag }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
