@@ -34,13 +34,11 @@ jobs:
       )
 
     steps:
-      # 1. Check out the exact commit built by CI.
       - name: Checkout deployment commit
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      # 2. Determine and validate the Docker image tag.
       - name: Set image tag
         id: set_image_tag
         shell: bash
@@ -67,7 +65,6 @@ jobs:
           echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Deployment image tag: $TAG"
 
-      # 3. Verify all required files.
       - name: Verify deployment files
         shell: bash
         run: |
@@ -92,18 +89,16 @@ jobs:
             echo "Found: $file"
           done
 
-          echo "All required deployment files are present."
+          echo "All required files are present."
 
-      # 4. Package monitoring configuration.
       - name: Package monitoring configuration
         shell: bash
         run: |
           set -euo pipefail
           tar -czf monitoring-config.tar.gz monitoring/
           test -s monitoring-config.tar.gz
-          echo "Monitoring archive created successfully."
+          echo "Monitoring archive created."
 
-      # 5. Copy Compose file to staging.
       - name: Copy staging Compose file
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -113,7 +108,6 @@ jobs:
           source: deploy/staging/docker-compose.yml
           target: /tmp/team-c-deploy
 
-      # 6. Copy Nginx configuration.
       - name: Copy Nginx configuration
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -124,7 +118,6 @@ jobs:
           target: /tmp/team-c-nginx
           strip_components: 1
 
-      # 7. Copy monitoring configuration.
       - name: Copy monitoring archive
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -134,7 +127,6 @@ jobs:
           source: monitoring-config.tar.gz
           target: /tmp/team-c-monitoring
 
-      # 8. Verify server, prepare release and install configuration.
       - name: Prepare staging release
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -143,7 +135,6 @@ jobs:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          script_stop: true
           command_timeout: 2m
           envs: IMAGE_TAG
           script: |
@@ -152,7 +143,6 @@ jobs:
             echo "========== STAGING PREPARATION =========="
             echo "SSH user: $(whoami)"
             echo "Host: $(hostname)"
-            echo "Host IP addresses:"
             hostname -I || true
 
             if [ -z "${IMAGE_TAG:-}" ]; then
@@ -173,7 +163,6 @@ jobs:
 
             echo "Checking deployer account..."
             if ! id deployer >/dev/null 2>&1; then
-              echo "Creating deployer account..."
               sudo -n useradd -m -s /bin/bash deployer
             fi
 
@@ -226,7 +215,6 @@ jobs:
             echo "Release files prepared successfully."
             echo "Release directory: $RELEASE_DIR"
 
-      # 9. Create environment file, validate Compose, deploy and test.
       - name: Deploy application and monitoring
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -238,7 +226,6 @@ jobs:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          script_stop: true
           command_timeout: 10m
           envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,GRAFANA_ADMIN_PASSWORD
           script: |
@@ -246,20 +233,33 @@ jobs:
 
             echo "========== STAGING DEPLOYMENT =========="
 
-            # Diagnose missing environment variables without printing values.
             echo "Checking deployment variables..."
-            echo "IMAGE_TAG: ${IMAGE_TAG:+SET}"
-            echo "DOCKERHUB_USERNAME: ${DOCKERHUB_USERNAME:+SET}"
-            echo "DOCKERHUB_TOKEN: ${DOCKERHUB_TOKEN:+SET}"
-            echo "GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:+SET}"
 
-            if [ -z "${IMAGE_TAG:-}" ] ||
-               [ -z "${DOCKERHUB_USERNAME:-}" ] ||
-               [ -z "${DOCKERHUB_TOKEN:-}" ] ||
-               [ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
-              echo "ERROR: A required deployment variable is missing."
+            if [ -z "${IMAGE_TAG:-}" ]; then
+              echo "ERROR: IMAGE_TAG is empty."
               exit 1
             fi
+            echo "IMAGE_TAG check passed."
+
+            if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
+              echo "ERROR: DOCKERHUB_USERNAME is empty."
+              exit 1
+            fi
+            echo "DOCKERHUB_USERNAME check passed."
+
+            if [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "ERROR: DOCKERHUB_TOKEN is empty."
+              exit 1
+            fi
+            echo "DOCKERHUB_TOKEN check passed."
+
+            if [ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
+              echo "ERROR: GRAFANA_ADMIN_PASSWORD is empty."
+              exit 1
+            fi
+            echo "GRAFANA_ADMIN_PASSWORD check passed."
+
+            echo "All deployment variables validated."
 
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
             COMPOSE_FILE="$RELEASE_DIR/docker-compose.yml"
@@ -274,16 +274,15 @@ jobs:
               exit 1
             fi
 
-            test -f "$COMPOSE_FILE" || {
+            if [ ! -f "$COMPOSE_FILE" ]; then
               echo "ERROR: Compose file is missing."
               exit 1
-            }
+            fi
 
             echo "Checking deployer and Docker..."
             id deployer
             sudo -n -u deployer docker ps
 
-            # Never print the contents of this file to workflow logs.
             echo "Creating deployment environment file..."
             if ! printf \
               'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\nGRAFANA_ADMIN_PASSWORD=%s\n' \
@@ -338,12 +337,15 @@ jobs:
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" up -d --remove-orphans; then
               echo "ERROR: Docker Compose failed to start the stack."
+
               sudo -n -u deployer docker compose \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" ps -a || true
+
               sudo -n -u deployer docker compose \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=80 || true
+
               exit 1
             fi
 
@@ -361,9 +363,11 @@ jobs:
               -f "$COMPOSE_FILE" exec -T backend \
               wget -qO- http://localhost:5000/api/health; then
               echo "ERROR: Backend health check failed."
+
               sudo -n -u deployer docker compose \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=100 backend || true
+
               exit 1
             fi
 
@@ -372,9 +376,11 @@ jobs:
             if ! curl --fail --silent --show-error --max-time 30 \
               http://localhost/ >/dev/null; then
               echo "ERROR: Frontend health check failed."
+
               sudo -n -u deployer docker compose \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=80 nginx frontend || true
+
               exit 1
             fi
 
@@ -384,9 +390,11 @@ jobs:
             if ! curl --fail --silent --show-error --max-time 30 \
               http://localhost/api/health; then
               echo "ERROR: Public API health check failed."
+
               sudo -n -u deployer docker compose \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=100 nginx backend || true
+
               exit 1
             fi
 
@@ -397,9 +405,11 @@ jobs:
               -f "$COMPOSE_FILE" exec -T prometheus \
               promtool check config /etc/prometheus/prometheus.yml; then
               echo "ERROR: Prometheus configuration check failed."
+
               sudo -n -u deployer docker compose \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=80 prometheus || true
+
               exit 1
             fi
 
@@ -410,7 +420,6 @@ jobs:
             echo "Release directory: $RELEASE_DIR"
             echo "========================================="
 
-      # 10. Collect diagnostic information if any deployment step fails.
       - name: Diagnose staging deployment failure
         if: failure()
         uses: appleboy/ssh-action@v1.2.0
@@ -445,8 +454,8 @@ jobs:
               sudo -n ls -lah "$RELEASE_DIR" || true
 
               if sudo -n test -f "$COMPOSE_FILE"; then
-                echo "Compose service status:"
                 if sudo -n test -f "$ENV_FILE"; then
+                  echo "Compose service status:"
                   sudo -n -u deployer docker compose \
                     --env-file "$ENV_FILE" \
                     -f "$COMPOSE_FILE" ps -a || true
@@ -461,4 +470,4 @@ jobs:
               fi
             fi
 
-            echo "========== END DIAGNOSTICS =========="
+            echo "========== END DIAGNOSTICS =========="      
