@@ -143,8 +143,17 @@ jobs:
             sudo mkdir -p /opt/team-c/shared
 
             # The SSH account is ubuntu; releases are operated by deployer.
-            if ! id deployer >/dev/null 2>&1; then
-              echo "Required Linux user 'deployer' does not exist."
+            echo "Connected SSH user: $(whoami)"
+            echo "Connected host: $(hostname)"
+            echo "Connected instance IPs:"
+            hostname -I || true
+
+            if id deployer >/dev/null 2>&1; then
+               echo "SUCCESS: deployer exists."
+               id deployer
+            else
+              echo "ERROR: deployer does not exist on this host."
+              getent passwd deployer || true."
               exit 1
             fi
 
