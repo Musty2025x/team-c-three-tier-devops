@@ -121,7 +121,34 @@ jobs:
           source: monitoring-config.tar.gz
           target: /tmp/team-c-monitoring
 
-      # 8. Prepare the release directory and install config files.
+       # 8. Create deployer user if it doesn't exist.
+      - name: Ensure deployer user exists
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -eu
+
+            if id deployer >/dev/null 2>&1; then
+              echo "SUCCESS: deployer user already exists."
+              id deployer
+            else
+              echo "Creating deployer user..."
+              sudo useradd -m -s /bin/bash deployer
+
+              if ! getent group docker >/dev/null; then
+                sudo groupadd docker
+              fi
+
+              sudo usermod -aG docker deployer
+              echo "SUCCESS: deployer user created."
+              id deployer
+            fi
+
+      # 9. Prepare the release directory and install config files.
       - name: Prepare staging release
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -142,7 +169,6 @@ jobs:
             sudo mkdir -p /opt/team-c/releases
             sudo mkdir -p /opt/team-c/shared
 
-            # The SSH account is ubuntu; releases are operated by deployer.
             echo "Connected SSH user: $(whoami)"
             echo "Connected host: $(hostname)"
             echo "Connected instance IPs:"
