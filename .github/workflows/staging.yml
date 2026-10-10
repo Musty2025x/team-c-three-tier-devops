@@ -235,7 +235,7 @@ jobs:
       - name: Deploy application and monitoring
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE_TAG: ${{ steps.set_image_image_tag.outputs.image_tag }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
