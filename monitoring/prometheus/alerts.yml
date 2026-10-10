@@ -1,3 +1,4 @@
+
 groups:
   - name: team-c-alerts
     rules:
@@ -13,9 +14,9 @@ groups:
       - alert: HighErrorRate
         expr: |
           (
-            rate(http_requests_total{status=~"5.."}[5m])
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
             /
-            rate(http_requests_total[5m])
+            clamp_min(sum(rate(http_requests_total[5m])), 0.001)
           ) > 0.05
         for: 5m
         labels:

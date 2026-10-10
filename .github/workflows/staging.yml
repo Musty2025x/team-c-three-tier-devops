@@ -17,17 +17,15 @@ on:
 permissions:
   contents: read
 
-env:
-  BACKEND_IMAGE: musty101/team-c-backend
-  FRONTEND_IMAGE: musty101/team-c-frontend
+concurrency:
+  group: staging-deployment
+  cancel-in-progress: false
 
 jobs:
   deploy:
     name: Deploy to Staging
     runs-on: ubuntu-latest
 
-    # Automatically deploy only when CI succeeds on main.
-    # Also allow manual deployment through workflow_dispatch.
     if: >
       github.event_name == 'workflow_dispatch' ||
       (
@@ -36,60 +34,63 @@ jobs:
       )
 
     steps:
-
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-
-      - name: Checkout exact commit that CI built
+      # 1. Check out the exact commit CI built.
+      - name: Checkout deployment commit
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      # ==========================================
-      # SET IMAGE TAG
-      # ==========================================
-
-      - name: Set deployment image tag
+      # 2. Determine the Docker image tag.
+      - name: Set image tag
+        id: set_image_tag
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          set -e
+          set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$INPUT_IMAGE_TAG"
           else
-            echo "IMAGE_TAG=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+            TAG="$WORKFLOW_SHA"
           fi
 
-          echo "Deployment image tag:"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "${{ inputs.image_tag }}"
-          else
-            echo "${{ github.event.workflow_run.head_sha }}"
+          if [[ -z "$TAG" || ! "$TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid Docker image tag."
+            exit 1
           fi
 
-      # ==========================================
-      # VERIFY LOCAL DEPLOYMENT FILES
-      # ==========================================
+          echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying image tag: $TAG"
 
-      - name: Verify staging deployment files
+      # 3. Verify all required deployment files.
+      - name: Verify deployment files
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "Checking staging Docker Compose file..."
           test -f deploy/staging/docker-compose.yml
-
-          echo "Checking Nginx configuration..."
           test -f nginx/nginx.conf
+          test -f monitoring/prometheus/prometheus.yml
+          test -f monitoring/prometheus/alerts.yml
+          test -f monitoring/alertmanager/alertmanager.yml
+          test -f monitoring/grafana/provisioning/datasources/datasource.yml
+          test -f monitoring/grafana/provisioning/dashboards/dashboard.yml
+          test -f monitoring/grafana/dashboards/team-c.json
 
-          echo ""
-          echo "Deployment files found:"
-          ls -lah deploy/staging/docker-compose.yml
-          ls -lah nginx/nginx.conf
+          echo "All required deployment files are present."
 
-      # ==========================================
-      # COPY DOCKER COMPOSE FILE TO EC2
-      # ==========================================
+      # 4. Package monitoring files to preserve directory structure.
+      - name: Package monitoring configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf monitoring-config.tar.gz monitoring/
 
+      # 5. Copy Docker Compose file to staging.
       - name: Copy staging Compose file
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -99,10 +100,7 @@ jobs:
           source: deploy/staging/docker-compose.yml
           target: /tmp/team-c-deploy
 
-      # ==========================================
-      # COPY NGINX CONFIGURATION TO EC2
-      # ==========================================
-
+      # 6. Copy Nginx configuration.
       - name: Copy Nginx configuration
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -113,311 +111,162 @@ jobs:
           target: /tmp/team-c-nginx
           strip_components: 1
 
-      # ==========================================
-      # REMOTE VERIFICATION
-      # ==========================================
+      # 7. Copy the monitoring archive.
+      - name: Copy monitoring archive
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          source: monitoring-config.tar.gz
+          target: /tmp/team-c-monitoring
 
-      - name: Verify uploaded deployment files on EC2
+      # 8. Prepare the release directory and install config files.
+      - name: Prepare staging release
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_TAG: ${{ steps.set_image_tag.outputs.image_tag }}
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
-
+          envs: IMAGE_TAG
           script: |
-            set -e
-
-            echo "=========================================="
-            echo "Verifying uploaded deployment files"
-            echo "=========================================="
-
-            echo ""
-            echo "Checking Docker Compose file..."
+            set -eu
 
             test -f /tmp/team-c-deploy/deploy/staging/docker-compose.yml
-
-            echo "Docker Compose file found:"
-            ls -lah /tmp/team-c-deploy/deploy/staging/docker-compose.yml
-
-            echo ""
-            echo "Checking Nginx configuration..."
-
             test -f /tmp/team-c-nginx/nginx.conf
+            test -f /tmp/team-c-monitoring/monitoring-config.tar.gz
 
-            echo "Nginx configuration found:"
-            ls -lah /tmp/team-c-nginx/nginx.conf
+            sudo mkdir -p /opt/team-c/releases
+            sudo mkdir -p /opt/team-c/shared
 
-            echo ""
-            echo "Uploaded files verified successfully."
-
-      # ==========================================
-      # DEPLOY TO STAGING
-      # ==========================================
-
-      - name: Deploy to staging
-        uses: appleboy/ssh-action@v1.2.0
-
-        env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-
-        with:
-          host: ${{ secrets.STAGING_HOST }}
-          username: ${{ secrets.STAGING_USER }}
-          key: ${{ secrets.STAGING_SSH_KEY }}
-          script_stop: true
-          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
-
-          script: |
-            set -e
-
-            echo "=========================================="
-            echo "Starting staging deployment"
-            echo "=========================================="
-
-            echo "Image tag:"
-            echo "${IMAGE_TAG}"
-
-            RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
-
-            # ==========================================
-            # CREATE RELEASE DIRECTORY
-            # ==========================================
-
-            echo ""
-            echo "Creating release directory..."
-
-            sudo mkdir -p "${RELEASE_DIR}"
+            # The SSH account is ubuntu; releases are operated by deployer.
+            if ! id deployer >/dev/null 2>&1; then
+              echo "Required Linux user 'deployer' does not exist."
+              exit 1
+            fi
 
             sudo chown -R deployer:deployer /opt/team-c
 
-            # ==========================================
-            # COPY DOCKER COMPOSE FILE
-            # ==========================================
+            RELEASE_DIR="/opt/team-c/releases/${{ env.IMAGE_TAG }}"
+            sudo -u deployer mkdir -p "$RELEASE_DIR"
 
-            echo ""
-            echo "Copying Docker Compose file..."
+            sudo cp /tmp/team-c-deploy/deploy/staging/docker-compose.yml \
+              "$RELEASE_DIR/docker-compose.yml"
 
-            sudo cp \
-              /tmp/team-c-deploy/deploy/staging/docker-compose.yml \
-              "${RELEASE_DIR}/docker-compose.yml"
+            sudo cp /tmp/team-c-nginx/nginx.conf \
+              "$RELEASE_DIR/nginx.conf"
 
-            # ==========================================
-            # COPY NGINX CONFIGURATION
-            # ==========================================
+            sudo tar -xzf /tmp/team-c-monitoring/monitoring-config.tar.gz \
+              -C "$RELEASE_DIR"
 
-            echo ""
-            echo "Copying Nginx configuration..."
+            sudo chown -R deployer:deployer "$RELEASE_DIR"
 
-            sudo cp \
-              /tmp/team-c-nginx/nginx.conf \
-              "${RELEASE_DIR}/nginx.conf"
+            test -f "$RELEASE_DIR/docker-compose.yml"
+            test -f "$RELEASE_DIR/nginx.conf"
+            test -f "$RELEASE_DIR/monitoring/prometheus/prometheus.yml"
+            test -f "$RELEASE_DIR/monitoring/prometheus/alerts.yml"
+            test -f "$RELEASE_DIR/monitoring/alertmanager/alertmanager.yml"
+            test -f "$RELEASE_DIR/monitoring/grafana/dashboards/team-c.json"
 
-            # ==========================================
-            # SET FILE OWNERSHIP
-            # ==========================================
+            echo "Release files prepared successfully."
 
-            echo ""
-            echo "Setting file ownership..."
+      # 9. Validate Compose and deploy the stack.
+      - name: Deploy application and monitoring
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_TAG: ${{ steps.set_image_tag.outputs.image_tag }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: true
+          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,GRAFANA_ADMIN_PASSWORD
+          script: |
+            set -eu
 
-            sudo chown deployer:deployer \
-              "${RELEASE_DIR}/docker-compose.yml" \
-              "${RELEASE_DIR}/nginx.conf"
+            RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
 
-            # ==========================================
-            # VERIFY RELEASE FILES
-            # ==========================================
+            if [ -z "$DOCKERHUB_USERNAME" ] ||
+               [ -z "$DOCKERHUB_TOKEN" ] ||
+               [ -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+              echo "A required deployment secret is missing."
+              exit 1
+            fi
 
-            echo ""
-            echo "=========================================="
-            echo "Verifying release files"
-            echo "=========================================="
+            # Do not print secret values in workflow logs.
+            printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\nGRAFANA_ADMIN_PASSWORD=%s\n' \
+              "$IMAGE_TAG" \
+              "$DOCKERHUB_USERNAME" \
+              "$GRAFANA_ADMIN_PASSWORD" \
+              | sudo -u deployer tee "$RELEASE_DIR/.env" >/dev/null
 
-            test -f "${RELEASE_DIR}/docker-compose.yml"
-            test -f "${RELEASE_DIR}/nginx.conf"
+            sudo chmod 600 "$RELEASE_DIR/.env"
+            sudo chown deployer:deployer "$RELEASE_DIR/.env"
 
-            echo ""
-            echo "Release files:"
-            ls -lah "${RELEASE_DIR}"
+            cd "$RELEASE_DIR"
 
-            # ==========================================
-            # CREATE ENVIRONMENT FILE
-            # ==========================================
-
-            echo ""
-            echo "Creating environment file..."
-
-            printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\n' \
-              "${IMAGE_TAG}" \
-              "${DOCKERHUB_USERNAME}" \
-              | sudo tee "${RELEASE_DIR}/.env" > /dev/null
-
-            sudo chown deployer:deployer \
-              "${RELEASE_DIR}/.env"
-
-            # ==========================================
-            # VALIDATE DOCKER COMPOSE
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Validating Docker Compose configuration"
-            echo "=========================================="
-
+            echo "Validating Docker Compose configuration..."
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.yml" \
-              config
+              --env-file "$RELEASE_DIR/.env" \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              config -q
 
-            echo ""
-            echo "Docker Compose configuration is valid."
+            echo "$DOCKERHUB_TOKEN" | sudo -u deployer docker login \
+              --username "$DOCKERHUB_USERNAME" \
+              --password-stdin
 
-            # ==========================================
-            # LOGIN TO DOCKER HUB
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Logging into Docker Hub"
-            echo "=========================================="
-
-            echo "${DOCKERHUB_TOKEN}" \
-              | sudo -u deployer docker login \
-                --username "${DOCKERHUB_USERNAME}" \
-                --password-stdin
-
-            echo ""
-            echo "Docker Hub login successful."
-
-            # ==========================================
-            # PULL APPLICATION IMAGES
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Pulling application images"
-            echo "=========================================="
-
+            echo "Pulling required images..."
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.yml" \
+              --env-file "$RELEASE_DIR/.env" \
+              -f "$RELEASE_DIR/docker-compose.yml" \
               pull
 
-            echo ""
-            echo "Application images pulled successfully."
-
-            # ==========================================
-            # START APPLICATION
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Starting staging application"
-            echo "=========================================="
-
+            echo "Starting application and monitoring stack..."
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.yml" \
-              up -d
+              --env-file "$RELEASE_DIR/.env" \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              up -d --remove-orphans
 
-            # ==========================================
-            # WAIT FOR APPLICATION
-            # ==========================================
-
-            echo ""
-            echo "Waiting for application to start..."
-
+            echo "Waiting for services..."
             sleep 20
 
-            # ==========================================
-            # CONTAINER STATUS
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Container status"
-            echo "=========================================="
-
+            echo "Container status:"
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.yml" \
+              --env-file "$RELEASE_DIR/.env" \
+              -f "$RELEASE_DIR/docker-compose.yml" \
               ps
 
-            # ==========================================
-            # BACKEND HEALTH CHECK
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Checking backend health"
-            echo "=========================================="
-
+            echo "Checking backend health..."
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.yml" \
+              --env-file "$RELEASE_DIR/.env" \
+              -f "$RELEASE_DIR/docker-compose.yml" \
               exec -T backend \
               wget -qO- http://localhost:5000/api/health
 
             echo ""
-            echo "Backend health check passed."
+            echo "Checking public frontend..."
+            curl --fail --silent --show-error --max-time 30 \
+              http://localhost/ >/dev/null
 
-            # ==========================================
-            # PUBLIC FRONTEND HEALTH CHECK
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Checking public frontend"
-            echo "=========================================="
-
-            curl \
-              --fail \
-              --silent \
-              --show-error \
-              --max-time 30 \
-              http://localhost/
-
-            echo ""
-            echo "Public frontend is responding."
-
-            # ==========================================
-            # PUBLIC API HEALTH CHECK
-            # ==========================================
-
-            echo ""
-            echo "=========================================="
-            echo "Checking public API"
-            echo "=========================================="
-
-            curl \
-              --fail \
-              --silent \
-              --show-error \
-              --max-time 30 \
+            echo "Checking public API..."
+            curl --fail --silent --show-error --max-time 30 \
               http://localhost/api/health
 
             echo ""
-            echo "Public API is responding."
-
-            # ==========================================
-            # DEPLOYMENT SUCCESS
-            # ==========================================
+            echo "Checking Prometheus configuration..."
+            sudo -u deployer docker compose \
+              --env-file "$RELEASE_DIR/.env" \
+              -f "$RELEASE_DIR/docker-compose.yml" \
+              exec -T prometheus \
+              promtool check config /etc/prometheus/prometheus.yml
 
             echo ""
-            echo "=========================================="
             echo "STAGING DEPLOYMENT SUCCESSFUL"
-            echo "=========================================="
-
-            echo "Image tag:"
-            echo "${IMAGE_TAG}"
-
-            echo ""
-            echo "Release directory:"
-            echo "${RELEASE_DIR}"
-
-            echo ""
-            echo "Application is available on port 80."
-
-            echo "=========================================="
+            echo "Image tag: $IMAGE_TAG"
+            echo "Release directory: $RELEASE_DIR"

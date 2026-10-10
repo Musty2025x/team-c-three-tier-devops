@@ -10,10 +10,14 @@ variable "project_name" {
   default     = "team-c-three-tier"
 }
 
-variable "instance_type" {
-  description = "EC2 instance type"
-  type        = string
-  default     = "t3.micro"
+variable "instance_types" {
+  description = "EC2 instance type per environment"
+  type        = map(string)
+
+  default = {
+    staging    = "t3.medium"
+    production = "t3.micro"
+  }
 }
 
 variable "ssh_public_key" {
