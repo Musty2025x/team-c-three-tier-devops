@@ -19,7 +19,7 @@ The application follows the architecture of the open-source project [dockerized-
                  |---------------------|
                  | Lint + Tests        |
                  | npm audit           |
-                 | Trivy FS/Image scan |
+                 | Trivy FS/screenshots/image scan |
                  | Docker build/push   |
                  +----------+----------+
                             |
@@ -100,12 +100,32 @@ The application follows the architecture of the open-source project [dockerized-
 - SSH key pair for the EC2 instances
 - Discord or Slack webhook for alerting
 
+## build Frontend and backend
+```bash
+cd frontend
+npm run lint
+npm run build
+
+cd backend
+npm run lint
+```
+## output screenshot for frontend and backend build
+![alt text](screenshots/image.png)
+![alt text](screenshots/image-1.png)
+![alt text](screenshots/image-2.png)
+
 ## Local development
 
 ```bash
+cd ..
 cp .env.example .env
 docker compose up --build
+docker ps
 ```
+
+## Screenshot of active running container
+![alt text](screenshots/image-3.png)
+
 
 Open:
 
@@ -124,6 +144,15 @@ admin / admin
 
 Change these for anything beyond local development.
 
+## Screenshot of app runing locally via url
+![alt text](screenshots/image-4.png)
+![alt text](screenshots/image-5.png)
+![alt text](screenshots/image-6.png)
+![alt text](screenshots/image-7.png)
+![alt text](screenshots/image-8.png)
+![alt text](screenshots/image-9.png)
+
+
 ## CI/CD flow
 
 ### Pull request
@@ -135,20 +164,20 @@ Every PR runs:
 3. Backend unit tests
 4. Frontend build
 5. Dependency vulnerability check
-6. Docker image builds
+6. Docker screenshots/image builds
 7. Trivy filesystem scan
-8. Trivy image scan
+8. Trivy screenshots/image scan
 
 ### Merge to main
 
 A merge to `main`:
 
-1. Builds the application images.
+1. Builds the application screenshots/images.
 2. Pushes immutable Git-SHA tags to Docker Hub.
 3. Deploys automatically to staging.
 4. Runs a staging health check.
 5. Waits for GitHub Environment approval.
-6. Deploys the exact same image tags to production.
+6. Deploys the exact same screenshots/image tags to production.
 
 No manual SSH deployment is required.
 
@@ -277,7 +306,7 @@ docker compose up -d
 docker compose ps
 ```
 
-The server stores the previous image tags in:
+The server stores the previous screenshots/image tags in:
 
 ```text
 /opt/team-c/releases/
@@ -294,7 +323,7 @@ cd /opt/team-c
 ./rollback.sh
 ```
 
-The script reads the last known-good release and redeploys those image tags.
+The script reads the last known-good release and redeploys those screenshots/image tags.
 
 ## Monitoring
 
@@ -326,7 +355,7 @@ is firing.
 
 For the presentation:
 
-1. Deploy a known-bad backend image to staging or production.
+1. Deploy a known-bad backend screenshots/image to staging or production.
 2. API health check fails.
 3. Prometheus detects the failure.
 4. Alertmanager sends Discord/Slack notification.
@@ -350,10 +379,10 @@ docker compose logs --tail=100 nginx
 curl -f http://localhost/api/health
 ```
 
-### 3. Check the image
+### 3. Check the screenshots/image
 
 ```bash
-docker images
+docker screenshots/images
 docker inspect team-c-backend
 ```
 
@@ -409,7 +438,7 @@ Open the PR and show CI.
 
 Merge it and show automatic staging deployment.
 
-Approve production and show the same image SHA running in production.
+Approve production and show the same screenshots/image SHA running in production.
 
 Open Grafana.
 
@@ -437,7 +466,7 @@ API HEALTHY
 
 Discuss:
 
-- immutable image tags
+- immutable screenshots/image tags
 - automated tests
 - DevSecOps
 - infrastructure as code
@@ -454,11 +483,11 @@ Use these points on your CV/LinkedIn only after you have actually deployed and t
 
 - Built an end-to-end GitHub Actions CI/CD pipeline for a containerized three-tier application.
 - Provisioned AWS infrastructure with Terraform and remote state in S3.
-- Implemented Docker image vulnerability scanning with Trivy and dependency checks.
+- Implemented Docker screenshots/image vulnerability scanning with Trivy and dependency checks.
 - Automated staging deployment and gated production promotion using GitHub Environments.
 - Implemented Prometheus/Grafana observability for infrastructure and application metrics.
 - Configured Alertmanager notifications for application downtime.
-- Implemented Git-SHA image versioning and automated rollback to the last known-good release.
+- Implemented Git-SHA screenshots/image versioning and automated rollback to the last known-good release.
 
 ## Cleanup
 
