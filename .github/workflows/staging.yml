@@ -224,6 +224,7 @@ jobs:
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
             COMPOSE_FILE="$RELEASE_DIR/docker-compose.yml"
             ENV_FILE="$RELEASE_DIR/.env"
+            COMPOSE_PROJECT_NAME="team-c-staging"
             echo "Image tag: $IMAGE_TAG"
             echo "Release directory: $RELEASE_DIR"
             echo "Checking release directory..."
@@ -268,6 +269,7 @@ jobs:
             echo "Slack webhook secret installed without printing its value."
             echo "Validating Docker Compose configuration..."
             if ! sudo -n -u deployer docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" config -q; then
               echo "ERROR: Docker Compose validation failed."
@@ -285,6 +287,7 @@ jobs:
             echo "Docker Hub login succeeded."
             echo "Pulling required images..."
             if ! sudo -n -u deployer docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" pull; then
               echo "ERROR: Docker image pull failed."
@@ -293,13 +296,16 @@ jobs:
             echo "Image pull completed."
             echo "Starting application and monitoring..."
             if ! sudo -n -u deployer docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
               --env-file "$ENV_FILE" \
-              -f "$COMPOSE_FILE" up -d --build --remove-orphans; then
+              -f "$COMPOSE_FILE" up -d --remove-orphans; then
               echo "ERROR: Docker Compose failed to start the stack."
               sudo -n -u deployer docker compose \
+                -p "$COMPOSE_PROJECT_NAME" \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" ps -a || true
               sudo -n -u deployer docker compose \
+                -p "$COMPOSE_PROJECT_NAME" \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=80 || true
               exit 1
@@ -308,15 +314,18 @@ jobs:
             sleep 20
             echo "Container status:"
             sudo -n -u deployer docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" ps -a
             echo "Checking backend health..."
             if ! sudo -n -u deployer docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" exec -T backend \
               wget -qO- http://localhost:5000/api/health; then
               echo "ERROR: Backend health check failed."
               sudo -n -u deployer docker compose \
+                -p "$COMPOSE_PROJECT_NAME" \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=100 backend || true
               exit 1
@@ -327,6 +336,7 @@ jobs:
               http://localhost/ >/dev/null; then
               echo "ERROR: Frontend health check failed."
               sudo -n -u deployer docker compose \
+                -p "$COMPOSE_PROJECT_NAME" \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=80 nginx frontend || true
               exit 1
@@ -337,6 +347,7 @@ jobs:
               http://localhost/api/health; then
               echo "ERROR: Public API health check failed."
               sudo -n -u deployer docker compose \
+                -p "$COMPOSE_PROJECT_NAME" \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=100 nginx backend || true
               exit 1
@@ -344,11 +355,13 @@ jobs:
             echo ""
             echo "Checking Prometheus configuration..."
             if ! sudo -n -u deployer docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" exec -T prometheus \
               promtool check config /etc/prometheus/prometheus.yml; then
               echo "ERROR: Prometheus configuration check failed."
               sudo -n -u deployer docker compose \
+                -p "$COMPOSE_PROJECT_NAME" \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" logs --tail=80 prometheus || true
               exit 1
@@ -372,6 +385,7 @@ jobs:
           envs: IMAGE_TAG
           script: |
             set -u
+            COMPOSE_PROJECT_NAME="team-c-staging"
             echo "========== FAILURE DIAGNOSTICS =========="
             echo "Host: $(hostname)"
             echo "SSH user: $(whoami)"
@@ -390,10 +404,12 @@ jobs:
                 if sudo -n test -f "$ENV_FILE"; then
                   echo "Compose service status:"
                   sudo -n -u deployer docker compose \
+                    -p "$COMPOSE_PROJECT_NAME" \
                     --env-file "$ENV_FILE" \
                     -f "$COMPOSE_FILE" ps -a || true
                   echo "Recent service logs:"
                   sudo -n -u deployer docker compose \
+                    -p "$COMPOSE_PROJECT_NAME" \
                     --env-file "$ENV_FILE" \
                     -f "$COMPOSE_FILE" logs --tail=60 || true
                 else
