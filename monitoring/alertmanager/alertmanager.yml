@@ -2,18 +2,24 @@ global:
   resolve_timeout: 5m
 
 route:
-  receiver: default-receiver
+  receiver: team-c-slack
   group_by:
     - alertname
-  group_wait: 30s
-  group_interval: 5m
-  repeat_interval: 4h
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
 
 receivers:
-  - name: default-receiver
-    # Add one notification integration for the assignment.
-    # Slack example:
-    # slack_configs:
-    #   - api_url: "https://hooks.slack.com/services/REPLACE_ME"
-    #     channel: "#alerts"
-    #     send_resolved: true
+  - name: team-c-slack
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack_webhook_url
+        send_resolved: true
+        title: >-
+          [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+        text: >-
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Severity:* {{ .Labels.severity }}
+          *Description:* {{ .Annotations.description }}
+          *Status:* {{ .Status }}
+          {{ end }}

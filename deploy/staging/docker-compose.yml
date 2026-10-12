@@ -93,7 +93,9 @@ services:
       - "127.0.0.1:9093:9093"
     volumes:
       - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - /opt/team-c/shared/slack_webhook_url:/etc/alertmanager/secrets/slack_webhook_url:ro 
       - alertmanager_data:/alertmanager
+
 
   node-exporter:
     image: prom/node-exporter:v1.9.1
