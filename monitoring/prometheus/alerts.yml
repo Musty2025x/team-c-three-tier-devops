@@ -11,6 +11,24 @@ groups:
           summary: Team C backend is down
           description: The Team C backend has been unavailable for more than one minute.
 
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Team C Prometheus is down
+          description: Prometheus has been unable to scrape its own metrics endpoint for more than one minute.
+
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Team C Alertmanager is down
+          description: Prometheus cannot reach Alertmanager to deliver notifications.
+
       - alert: HighErrorRate
         expr: |
           (

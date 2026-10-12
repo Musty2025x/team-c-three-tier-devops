@@ -204,6 +204,10 @@ PRODUCTION_GRAFANA_PASSWORD
 ALERTMANAGER_WEBHOOK_URL
 ```
 
+Set `ALERTMANAGER_WEBHOOK_URL` to a Slack incoming webhook URL. This repository
+secret is used for staging Alertmanager alerts and for failed main-branch CI,
+staging, and production workflow notifications.
+
 Recommended GitHub Environments:
 
 ### staging
@@ -343,19 +347,25 @@ Grafana provides:
 - Error rate
 - API latency
 
-Alertmanager sends a notification when:
+Alertmanager sends a notification when one of these alerts fires:
 
 ```text
-APIHealthDown
+BackendDown
+PrometheusDown
+AlertmanagerDown
+HighErrorRate
 ```
 
-is firing.
+These runtime alerts are configured in the staging monitoring stack. GitHub
+Actions independently sends Slack notifications for failed CI pushes to `main`
+and failed staging/production deployments. Production runtime monitoring is not
+included in the production Compose stack.
 
 ## Failure demo
 
 For the presentation:
 
-1. Deploy a known-bad backend screenshots/image to staging or production.
+1. Deploy a known-bad backend image to staging.
 2. API health check fails.
 3. Prometheus detects the failure.
 4. Alertmanager sends Discord/Slack notification.
