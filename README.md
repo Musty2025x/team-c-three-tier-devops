@@ -461,6 +461,15 @@ Rollback
    ↓
 API HEALTHY
 ```
+### 4b. Stimulate a backend outrage in your staging compose stack
+Stop the backend service using the same Compose file and environment file as your deployment:
+```bash
+ls -lah /opt/team-c/releases/ 
+sudo -u deployer docker compose \
+  --env-file /opt/team-c/releases/DIRECTORY_TAG/.env \
+  -f /opt/team-c/releases/DIRECTORY_TAG/docker-compose.yml \
+  stop backend
+```
 
 ### 5. Lessons — 3 minutes
 
