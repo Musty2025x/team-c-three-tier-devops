@@ -175,3 +175,30 @@ jobs:
             "${FRONTEND_IMAGE}:${GITHUB_SHA}"
 
           echo "Docker images successfully pushed."
+
+  notify-failure:
+    name: Notify Slack about CI failure
+    needs:
+      - test
+      - security
+      - build-and-push
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      (
+        needs.test.result == 'failure' ||
+        needs.security.result == 'failure' ||
+        needs['build-and-push'].result == 'failure'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send CI failure notification
+        uses: slackapi/slack-github-action@v2
+        with:
+          webhook: ${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":red_circle: CI failed for `${{ github.repository }}` on `${{ github.ref_name }}` at commit `${{ github.sha }}`. <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>."
+            }

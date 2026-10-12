@@ -184,13 +184,13 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ALERTMANAGER_WEBHOOK_URL: ${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           command_timeout: 10m
-          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,GRAFANA_ADMIN_PASSWORD,SLACK_WEBHOOK_URL
+          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,GRAFANA_ADMIN_PASSWORD,ALERTMANAGER_WEBHOOK_URL
           script: |
             set -eu
             echo "========== STAGING DEPLOYMENT =========="
@@ -215,11 +215,11 @@ jobs:
               exit 1
             fi
             echo "GRAFANA_ADMIN_PASSWORD check passed."
-            if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-              echo "ERROR: SLACK_WEBHOOK_URL is empty. Add the SLACK_WEBHOOK_URL GitHub Actions secret."
+            if [ -z "${ALERTMANAGER_WEBHOOK_URL:-}" ]; then
+              echo "ERROR: ALERTMANAGER_WEBHOOK_URL is empty. Add the ALERTMANAGER_WEBHOOK_URL GitHub Actions secret."
               exit 1
             fi
-            echo "SLACK_WEBHOOK_URL check passed."
+            echo "ALERTMANAGER_WEBHOOK_URL check passed."
             echo "All deployment variables validated."
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
             COMPOSE_FILE="$RELEASE_DIR/docker-compose.yml"
@@ -258,7 +258,7 @@ jobs:
             fi
             echo "Installing Slack webhook secret..."
             sudo -n mkdir -p /opt/team-c/shared
-            if ! printf '%s' "$SLACK_WEBHOOK_URL" |
+            if ! printf '%s' "$ALERTMANAGER_WEBHOOK_URL" |
               sudo -n tee /opt/team-c/shared/slack_webhook_url >/dev/null; then
               echo "ERROR: Could not write Slack webhook secret."
               exit 1
@@ -402,3 +402,13 @@ jobs:
               fi
             fi
             echo "========== END DIAGNOSTICS =========="
+      - name: Notify Slack about staging deployment failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2
+        with:
+          webhook: ${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":red_circle: Staging deployment failed for `${{ github.repository }}` (image tag `${{ steps.set_image_tag.outputs.image_tag }}`). <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>."
+            }

@@ -93,6 +93,9 @@ PRODUCTION_GRAFANA_PASSWORD
 ALERTMANAGER_WEBHOOK_URL
 ```
 
+Set `ALERTMANAGER_WEBHOOK_URL` to a Slack incoming webhook URL. It is used for
+staging Alertmanager alerts and failed main-branch CI and deployment workflows.
+
 For Ubuntu EC2, the SSH user is normally:
 
 ```text

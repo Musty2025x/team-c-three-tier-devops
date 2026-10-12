@@ -22,8 +22,7 @@ jobs:
 
     # Configure required reviewers in:
     # GitHub → Settings → Environments → production
-    environment:
-      name: production
+    environment: production
 
     steps:
       # -----------------------------
@@ -199,3 +198,14 @@ jobs:
             echo "=========================================="
             echo "PRODUCTION DEPLOYMENT SUCCESSFUL"
             echo "=========================================="
+
+      - name: Notify Slack about production deployment failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2
+        with:
+          webhook: ${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":red_circle: Production deployment failed for `${{ github.repository }}` (image tag `${{ inputs.image_tag }}`). <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>."
+            }
