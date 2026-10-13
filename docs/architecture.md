@@ -1,5 +1,5 @@
 # Architecture
-
+![DevSecOps Pipeline on AWS](./devsecops-pipeline-aws(1).png)
 ```text
 Developer
    |
