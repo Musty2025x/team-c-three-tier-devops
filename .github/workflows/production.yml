@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Docker image tag / Git commit SHA to deploy"
+        description: "Tested Docker image tag / Git commit SHA"
         required: true
         type: string
 
@@ -14,52 +14,48 @@ permissions:
 env:
   BACKEND_IMAGE: musty101/team-c-backend
   FRONTEND_IMAGE: musty101/team-c-frontend
+  COMPOSE_PROJECT_NAME: team-c-production
 
 jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-
-    # Configure required reviewers in:
-    # GitHub → Settings → Environments → production
     environment: production
 
     steps:
-      # -----------------------------
-      # Checkout
-      # -----------------------------
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -----------------------------
-      # Verify Compose file
-      # -----------------------------
-
-      - name: Verify production Compose file
+      - name: Validate deployment files
         run: |
           set -e
-
           test -f docker-compose.prod.yml
+          test -f nginx/nginx.conf
+          echo "Production deployment files verified."
 
-          echo "Production Compose file found."
-
-      # -----------------------------
-      # Copy Compose file
-      # -----------------------------
-
-      - name: Copy production Compose file
+      - name: Copy production configuration
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
-          source: docker-compose.prod.yml
-          target: /tmp/team-c-production
+          source: "docker-compose.prod.yml,nginx/nginx.conf"
+          target: "/tmp/team-c-production"
+          strip_components: 0
+          overwrite: true
 
-      # -----------------------------
-      # Deploy
-      # -----------------------------
+      - name: Verify copied production configuration
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -eu
+            test -f /tmp/team-c-production/docker-compose.prod.yml
+            test -f /tmp/team-c-production/nginx/nginx.conf
+            echo "Production configuration files verified."
 
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.2.0
@@ -67,137 +63,98 @@ jobs:
           IMAGE_TAG: ${{ inputs.image_tag }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-
+          PRODUCTION_DB_PASSWORD: ${{ secrets.PRODUCTION_DB_PASSWORD }}
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
           script_stop: true
-          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
-
+          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,PRODUCTION_DB_PASSWORD
           script: |
-            set -e
+            set -eu
+            set +x
 
-            echo "=========================================="
-            echo "Starting production deployment"
-            echo "=========================================="
+            case "$IMAGE_TAG" in
+              *[!a-f0-9]*|'')
+                echo "ERROR: image_tag must be a hexadecimal commit SHA."
+                exit 1
+                ;;
+            esac
 
-            echo "Image tag:"
-            echo "${IMAGE_TAG}"
+            if [ "${#IMAGE_TAG}" -lt 40 ]; then
+              echo "ERROR: provide the full 40-character commit SHA."
+              exit 1
+            fi
+
+            test -n "$DOCKERHUB_USERNAME"
+            test -n "$DOCKERHUB_TOKEN"
+            test -n "$PRODUCTION_DB_PASSWORD"
 
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
+            COMPOSE_FILE="${RELEASE_DIR}/docker-compose.prod.yml"
+            ENV_FILE="${RELEASE_DIR}/.env"
 
-            # --------------------------------
-            # Create release directory
-            # --------------------------------
+            sudo install -d -o deployer -g deployer \
+              /opt/team-c/releases \
+              "$RELEASE_DIR" \
+              "$RELEASE_DIR/nginx"
 
-            sudo mkdir -p "${RELEASE_DIR}"
-
-            sudo chown -R deployer:deployer /opt/team-c
-
-            # --------------------------------
-            # Copy Compose file
-            # --------------------------------
-
-            sudo cp \
+            sudo install -o deployer -g deployer -m 0644 \
               /tmp/team-c-production/docker-compose.prod.yml \
-              "${RELEASE_DIR}/docker-compose.prod.yml"
+              "$COMPOSE_FILE"
 
-            sudo chown deployer:deployer \
-              "${RELEASE_DIR}/docker-compose.prod.yml"
+            sudo install -o deployer -g deployer -m 0644 \
+              /tmp/team-c-production/nginx/nginx.conf \
+              "$RELEASE_DIR/nginx/nginx.conf"
 
-            # --------------------------------
-            # Create environment file
-            # --------------------------------
+            sudo install -o deployer -g deployer -m 0600 \
+              /dev/null "$ENV_FILE"
 
-            printf 'IMAGE_TAG=%s\nDOCKERHUB_USERNAME=%s\n' \
-              "${IMAGE_TAG}" \
-              "${DOCKERHUB_USERNAME}" \
-              | sudo tee "${RELEASE_DIR}/.env" > /dev/null
+            {
+              printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG"
+              printf 'DOCKERHUB_USERNAME=%s\n' "$DOCKERHUB_USERNAME"
+              printf 'PRODUCTION_DB_PASSWORD=%s\n' "$PRODUCTION_DB_PASSWORD"
+            } | sudo tee "$ENV_FILE" >/dev/null
 
-            sudo chown deployer:deployer \
-              "${RELEASE_DIR}/.env"
+            sudo chown deployer:deployer "$ENV_FILE"
+            sudo chmod 0600 "$ENV_FILE"
 
-            # --------------------------------
-            # Validate Compose
-            # --------------------------------
-
-            echo "Validating production Compose configuration..."
-
-            sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.prod.yml" \
-              config
-
-            # --------------------------------
-            # Login to Docker Hub
-            # --------------------------------
-
-            echo "Logging into Docker Hub..."
-
-            echo "${DOCKERHUB_TOKEN}" \
-              | sudo -u deployer docker login \
-                --username "${DOCKERHUB_USERNAME}" \
+            printf '%s' "$DOCKERHUB_TOKEN" |
+              sudo -u deployer docker login \
+                --username "$DOCKERHUB_USERNAME" \
                 --password-stdin
 
-            # --------------------------------
-            # Pull exact release
-            # --------------------------------
-
-            echo "Pulling production images..."
+            sudo -u deployer docker compose \
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" config -q
 
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.prod.yml" \
-              pull
-
-            # --------------------------------
-            # Start production
-            # --------------------------------
-
-            echo "Starting production application..."
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" pull
 
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.prod.yml" \
-              up -d
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" up -d
 
-            # --------------------------------
-            # Wait for application
-            # --------------------------------
-
-            echo "Waiting for production application..."
-
-            sleep 20
-
-            # --------------------------------
-            # Show status
-            # --------------------------------
-
-            echo "Production container status:"
+            sleep 30
 
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.prod.yml" \
-              ps
-
-            # --------------------------------
-            # Backend health check
-            # --------------------------------
-
-            echo "Checking production backend health..."
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" ps
 
             sudo -u deployer docker compose \
-              --env-file "${RELEASE_DIR}/.env" \
-              -f "${RELEASE_DIR}/docker-compose.prod.yml" \
-              exec -T backend \
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" exec -T backend \
               wget -qO- http://localhost:5000/api/health
 
-            echo ""
-
-            echo "=========================================="
-            echo "PRODUCTION DEPLOYMENT SUCCESSFUL"
-            echo "=========================================="
+            echo
+            echo "Production containers passed the backend health check."
+            echo "Image tag: $IMAGE_TAG"
 
       - name: Notify Slack about production deployment failure
         if: failure()
