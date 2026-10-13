@@ -20,10 +20,9 @@ variable "instance_types" {
   }
 }
 
-variable "ssh_public_key" {
-  description = "Public SSH key contents"
+variable "public_key_location" {
+  description = "Path to the public SSH key file"
   type        = string
-  sensitive   = true
 }
 
 variable "allowed_ssh_cidr" {

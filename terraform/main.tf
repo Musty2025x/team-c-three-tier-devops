@@ -159,9 +159,9 @@ resource "aws_iam_instance_profile" "ec2" {
   role = aws_iam_role.ec2.name
 }
 
-resource "aws_key_pair" "deployer" {
-  key_name   = "${var.project_name}-deployer"
-  public_key = var.ssh_public_key
+resource "aws_key_pair" "ssh-key" {
+  key_name   = "server-key"
+  public_key = file(var.public_key_location)
 }
 
 locals {
@@ -178,9 +178,9 @@ resource "aws_instance" "app" {
   instance_type               = var.instance_types[each.value]
   subnet_id                   = aws_subnet.public.id
   vpc_security_group_ids      = [aws_security_group.ec2.id]
-  key_name                    = aws_key_pair.deployer.key_name
   iam_instance_profile        = aws_iam_instance_profile.ec2.name
   associate_public_ip_address = true
+  key_name                    = aws_key_pair.ssh-key.key_name
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     environment = each.value
