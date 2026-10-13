@@ -74,15 +74,8 @@ jobs:
             set -eu
             set +x
 
-            case "$IMAGE_TAG" in
-              *[!a-f0-9]*|'')
-                echo "ERROR: image_tag must be a hexadecimal commit SHA."
-                exit 1
-                ;;
-            esac
-
-            if [ "${#IMAGE_TAG}" -lt 40 ]; then
-              echo "ERROR: provide the full 40-character commit SHA."
+            if ! printf '%s\n' "$IMAGE_TAG" | grep -Eq '^[a-f0-9]{40}$'; then
+              echo "ERROR: image_tag must be a full 40-character lowercase hexadecimal commit SHA."
               exit 1
             fi
 
