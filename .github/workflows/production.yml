@@ -181,19 +181,27 @@ jobs:
             test -n "$DOCKERHUB_USERNAME"
             echo "Docker Hub username is present"
 
-            echo "STEP 5C: Logging in to Docker Hub"
-            export DOCKER_LOGIN_TOKEN="$DOCKERHUB_TOKEN"
+            echo "STEP 5C: Preparing Docker Hub login"
+            LOGIN_FILE="$(mktemp)"
+            chmod 600 "$LOGIN_FILE"
+            trap 'rm -f "$LOGIN_FILE"' EXIT
 
-            sudo --preserve-env=DOCKER_LOGIN_TOKEN,DOCKERHUB_USERNAME \
-              -u deployer sh -c '
-                printf "%s" "$DOCKER_LOGIN_TOKEN" |
-                  docker login \
-                    --username "$DOCKERHUB_USERNAME" \
-                    --password-stdin
-              '
+            printf '%s' "$DOCKERHUB_TOKEN" > "$LOGIN_FILE"
+            sudo install -o deployer -g deployer -m 0600 \
+              "$LOGIN_FILE" /tmp/team-c-docker-token
 
-            unset DOCKER_LOGIN_TOKEN
-            echo "STEP 5D: Docker Hub login succeeded"
+            rm -f "$LOGIN_FILE"
+
+            echo "STEP 5D: Logging in as deployer"
+            sudo -u deployer sh -c '
+              docker login \
+                --username "$1" \
+                --password-stdin < /tmp/team-c-docker-token
+            ' sh "$DOCKERHUB_USERNAME"
+
+            sudo rm -f /tmp/team-c-docker-token
+            trap - EXIT
+            echo "Docker Hub login succeeded"
 
             echo "STEP 6: Validating Compose configuration"
             sudo -u deployer docker compose \
