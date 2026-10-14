@@ -31,16 +31,19 @@ jobs:
           SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
           SSH_HOST: ${{ secrets.PRODUCTION_HOST }}
           SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DB_PASSWORD: ${{ secrets.PRODUCTION_DB_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
 
-          for name in SSH_KEY SSH_HOST SSH_USER DOCKER_USER DOCKER_TOKEN DB_PASSWORD; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::A required deployment secret is missing or empty: $name"
-              exit 1
-            fi
-          done
+          [[ -n "$SSH_KEY" ]] || { echo "::error::PRODUCTION_SSH_KEY is missing"; exit 1; }
+          [[ -n "$SSH_HOST" ]] || { echo "::error::PRODUCTION_HOST is missing"; exit 1; }
+          [[ -n "$SSH_USER" ]] || { echo "::error::PRODUCTION_SSH_USER is missing"; exit 1; }
+          [[ -n "$DOCKER_USER" ]] || { echo "::error::DOCKERHUB_USERNAME is missing"; exit 1; }
+          [[ -n "$DOCKER_TOKEN" ]] || { echo "::error::DOCKERHUB_TOKEN is missing"; exit 1; }
+          [[ -n "$DB_PASSWORD" ]] || { echo "::error::PRODUCTION_DB_PASSWORD is missing"; exit 1; }
 
           echo "Required deployment secrets are present."
 
