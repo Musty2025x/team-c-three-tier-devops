@@ -78,6 +78,21 @@ jobs:
             test -f /tmp/team-c-production/nginx/nginx.conf
             echo "Production configuration files verified."
 
+      - name: Validate production SSH key format
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/production_key"
+          chmod 600 "$RUNNER_TEMP/production_key"
+
+          ssh-keygen -y -f "$RUNNER_TEMP/production_key" \
+            > /dev/null
+
+          echo "Production SSH key is valid and parseable."
+
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -89,6 +104,9 @@ jobs:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_SSH_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: 22
+          timeout: 30s
+          command_timeout: 10m
           script_stop: true
           envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,PRODUCTION_DB_PASSWORD
           script: |
