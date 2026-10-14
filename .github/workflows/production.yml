@@ -78,48 +78,6 @@ jobs:
             test -f /tmp/team-c-production/nginx/nginx.conf
             echo "Production configuration files verified."
 
-      - name: Validate production SSH key format
-        env:
-          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/production_key"
-          chmod 600 "$RUNNER_TEMP/production_key"
-
-          ssh-keygen -y -f "$RUNNER_TEMP/production_key" \
-            > /dev/null
-
-          echo "Production SSH key is valid and parseable."
-
-      - name: Diagnose production SSH environment forwarding
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          PRODUCTION_DB_PASSWORD: ${{ secrets.PRODUCTION_DB_PASSWORD }}
-        with:
-          host: ${{ secrets.PRODUCTION_HOST }}
-          username: ${{ secrets.PRODUCTION_SSH_USER }}
-          key: ${{ secrets.PRODUCTION_SSH_KEY }}
-          port: 22
-          timeout: 30s
-          command_timeout: 1m
-          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,PRODUCTION_DB_PASSWORD
-          script: |
-            set -eu
-            echo "SSH connection successful"
-            test -n "$IMAGE_TAG"
-            echo "Image tag received successfully"
-            test -n "$DOCKERHUB_USERNAME"
-            echo "Docker Hub username received successfully"
-            test -n "$DOCKERHUB_TOKEN"
-            echo "Docker Hub token received successfully"
-            test -n "$PRODUCTION_DB_PASSWORD"
-            echo "Database password received successfully"
-
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -140,8 +98,11 @@ jobs:
             set -eu
             set +x
 
-            echo "STEP 1: Validating deployment variables"
-            printf '%s\n' "$IMAGE_TAG" | grep -Eq '^[a-f0-9]{40}$'
+            if ! printf '%s\n' "$IMAGE_TAG" | grep -Eq '^[a-f0-9]{40}$'; then
+              echo "ERROR: image_tag must be a full 40-character lowercase hexadecimal commit SHA."
+              exit 1
+            fi
+
             test -n "$DOCKERHUB_USERNAME"
             test -n "$DOCKERHUB_TOKEN"
             test -n "$PRODUCTION_DB_PASSWORD"
@@ -150,20 +111,21 @@ jobs:
             COMPOSE_FILE="${RELEASE_DIR}/docker-compose.prod.yml"
             ENV_FILE="${RELEASE_DIR}/.env"
 
-            echo "STEP 2: Creating release directories"
             sudo install -d -o deployer -g deployer \
-              /opt/team-c/releases "$RELEASE_DIR" "$RELEASE_DIR/nginx"
+              /opt/team-c/releases \
+              "$RELEASE_DIR" \
+              "$RELEASE_DIR/nginx"
 
-            echo "STEP 3: Installing Compose configuration"
             sudo install -o deployer -g deployer -m 0644 \
-              /tmp/team-c-production/docker-compose.prod.yml "$COMPOSE_FILE"
+              /tmp/team-c-production/docker-compose.prod.yml \
+              "$COMPOSE_FILE"
 
             sudo install -o deployer -g deployer -m 0644 \
               /tmp/team-c-production/nginx/nginx.conf \
               "$RELEASE_DIR/nginx/nginx.conf"
 
-            echo "STEP 4: Writing protected environment file"
-            sudo install -o deployer -g deployer -m 0600 /dev/null "$ENV_FILE"
+            sudo install -o deployer -g deployer -m 0600 \
+              /dev/null "$ENV_FILE"
 
             {
               printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG"
@@ -173,63 +135,44 @@ jobs:
 
             sudo chown deployer:deployer "$ENV_FILE"
             sudo chmod 0600 "$ENV_FILE"
+             
+            echo "Logging in to Docker Hub..."
+
+            printf '%s' "$DOCKERHUB_TOKEN" | \
+              sudo -n -u deployer docker login \
+                --username "$DOCKERHUB_USERNAME" \
+                --password-stdin
             
-            echo "STEP 5A: Checking Docker"
-            sudo -u deployer docker --version
+            echo "Docker Hub login completed."
 
-            echo "STEP 5B: Checking Docker Hub username"
-            test -n "$DOCKERHUB_USERNAME"
-            echo "Docker Hub username is present"
-
-            echo "STEP 5C: Preparing Docker Hub login"
-            LOGIN_FILE="$(mktemp)"
-            chmod 600 "$LOGIN_FILE"
-            trap 'rm -f "$LOGIN_FILE"' EXIT
-
-            printf '%s' "$DOCKERHUB_TOKEN" > "$LOGIN_FILE"
-            sudo install -o deployer -g deployer -m 0600 \
-              "$LOGIN_FILE" /tmp/team-c-docker-token
-
-            rm -f "$LOGIN_FILE"
-
-            echo "STEP 5D: Logging in as deployer"
-            sudo -u deployer sh -c '
-              docker login \
-                --username "$1" \
-                --password-stdin < /tmp/team-c-docker-token
-            ' sh "$DOCKERHUB_USERNAME"
-
-            sudo rm -f /tmp/team-c-docker-token
-            trap - EXIT
-            echo "Docker Hub login succeeded"
-
-            echo "STEP 6: Validating Compose configuration"
             sudo -u deployer docker compose \
-              -p team-c-production --env-file "$ENV_FILE" \
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" config -q
 
-            echo "STEP 7: Pulling production images"
             sudo -u deployer docker compose \
-              -p team-c-production --env-file "$ENV_FILE" \
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" pull
 
-            echo "STEP 8: Starting production containers"
             sudo -u deployer docker compose \
-              -p team-c-production --env-file "$ENV_FILE" \
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" up -d
 
-            echo "STEP 9: Checking container status"
             sleep 30
+
             sudo -u deployer docker compose \
-              -p team-c-production --env-file "$ENV_FILE" \
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" ps
 
-            echo "STEP 10: Checking backend health"
             sudo -u deployer docker compose \
-              -p team-c-production --env-file "$ENV_FILE" \
+              -p team-c-production \
+              --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" exec -T backend \
               wget -qO- http://localhost:5000/api/health
 
             echo
-            echo "Production deployment and backend health check completed."
+            echo "Production containers passed the backend health check."
             echo "Image tag: $IMAGE_TAG"
