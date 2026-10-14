@@ -173,26 +173,21 @@ jobs:
 
             sudo chown deployer:deployer "$ENV_FILE"
             sudo chmod 0600 "$ENV_FILE"
-
-            echo "STEP 5: Logging in to Docker Hub"
-            printf '%s' "$DOCKERHUB_TOKEN" |
-              sudo -u deployer docker login \
-                --username "$DOCKERHUB_USERNAME" --password-stdin
             
-            echo "STEP 5A: Checking Docker availability as deployer"
+            echo "STEP 5A: Checking Docker"
             sudo -u deployer docker --version
 
             echo "STEP 5B: Checking Docker Hub username"
             test -n "$DOCKERHUB_USERNAME"
             echo "Docker Hub username is present"
 
-            echo "STEP 5C: Testing Docker login"
+            echo "STEP 5C: Logging in to Docker Hub"
             printf '%s' "$DOCKERHUB_TOKEN" |
               sudo -u deployer docker login \
                 --username "$DOCKERHUB_USERNAME" \
                 --password-stdin
 
-            echo "Docker Hub login completed"
+            echo "STEP 5D: Docker Hub login succeeded"
 
             echo "STEP 6: Validating Compose configuration"
             sudo -u deployer docker compose \
