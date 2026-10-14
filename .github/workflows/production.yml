@@ -26,6 +26,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate deployment secrets
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          SSH_HOST: ${{ secrets.PRODUCTION_HOST }}
+          SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in SSH_KEY SSH_HOST SSH_USER DOCKER_USER DOCKER_TOKEN DB_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::A required deployment secret is missing or empty: $name"
+              exit 1
+            fi
+          done
+
+          echo "Required deployment secrets are present."
+
       - name: Validate deployment files
         run: |
           set -e
