@@ -93,6 +93,33 @@ jobs:
 
           echo "Production SSH key is valid and parseable."
 
+      - name: Diagnose production SSH environment forwarding
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          PRODUCTION_DB_PASSWORD: ${{ secrets.PRODUCTION_DB_PASSWORD }}
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_SSH_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: 22
+          timeout: 30s
+          command_timeout: 1m
+          envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,PRODUCTION_DB_PASSWORD
+          script: |
+            set -eu
+            echo "SSH connection successful"
+            test -n "$IMAGE_TAG"
+            echo "Image tag received successfully"
+            test -n "$DOCKERHUB_USERNAME"
+            echo "Docker Hub username received successfully"
+            test -n "$DOCKERHUB_TOKEN"
+            echo "Docker Hub token received successfully"
+            test -n "$PRODUCTION_DB_PASSWORD"
+            echo "Database password received successfully"
+
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.2.0
         env:
