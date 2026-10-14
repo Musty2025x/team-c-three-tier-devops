@@ -182,11 +182,17 @@ jobs:
             echo "Docker Hub username is present"
 
             echo "STEP 5C: Logging in to Docker Hub"
-            printf '%s' "$DOCKERHUB_TOKEN" |
-              sudo -u deployer docker login \
-                --username "$DOCKERHUB_USERNAME" \
-                --password-stdin
+            export DOCKER_LOGIN_TOKEN="$DOCKERHUB_TOKEN"
 
+            sudo --preserve-env=DOCKER_LOGIN_TOKEN,DOCKERHUB_USERNAME \
+              -u deployer sh -c '
+                printf "%s" "$DOCKER_LOGIN_TOKEN" |
+                  docker login \
+                    --username "$DOCKERHUB_USERNAME" \
+                    --password-stdin
+              '
+
+            unset DOCKER_LOGIN_TOKEN
             echo "STEP 5D: Docker Hub login succeeded"
 
             echo "STEP 6: Validating Compose configuration"
