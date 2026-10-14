@@ -138,22 +138,74 @@ jobs:
           envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,PRODUCTION_DB_PASSWORD
           script: |
             set -eu
-            echo "Deployment SSH step started"
-            echo "Checking deployment user..."
-            whoami
-            echo "Checking sudo access..."
-            sudo -n true
-            echo "Sudo access confirmed"
-            echo "Image tag: $IMAGE_TAG"
+            set +x
 
+            echo "STEP 1: Validating deployment variables"
+            printf '%s\n' "$IMAGE_TAG" | grep -Eq '^[a-f0-9]{40}$'
+            test -n "$DOCKERHUB_USERNAME"
+            test -n "$DOCKERHUB_TOKEN"
+            test -n "$PRODUCTION_DB_PASSWORD"
 
-      - name: Notify Slack about production deployment failure
-        if: failure()
-        uses: slackapi/slack-github-action@v2
-        with:
-          webhook: ${{ secrets.ALERTMANAGER_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
+            RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
+            COMPOSE_FILE="${RELEASE_DIR}/docker-compose.prod.yml"
+            ENV_FILE="${RELEASE_DIR}/.env"
+
+            echo "STEP 2: Creating release directories"
+            sudo install -d -o deployer -g deployer \
+              /opt/team-c/releases "$RELEASE_DIR" "$RELEASE_DIR/nginx"
+
+            echo "STEP 3: Installing Compose configuration"
+            sudo install -o deployer -g deployer -m 0644 \
+              /tmp/team-c-production/docker-compose.prod.yml "$COMPOSE_FILE"
+
+            sudo install -o deployer -g deployer -m 0644 \
+              /tmp/team-c-production/nginx/nginx.conf \
+              "$RELEASE_DIR/nginx/nginx.conf"
+
+            echo "STEP 4: Writing protected environment file"
+            sudo install -o deployer -g deployer -m 0600 /dev/null "$ENV_FILE"
+
             {
-              "text": ":red_circle: Production deployment failed for `${{ github.repository }}` (image tag `${{ inputs.image_tag }}`). <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>."
-            }
+              printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG"
+              printf 'DOCKERHUB_USERNAME=%s\n' "$DOCKERHUB_USERNAME"
+              printf 'PRODUCTION_DB_PASSWORD=%s\n' "$PRODUCTION_DB_PASSWORD"
+            } | sudo tee "$ENV_FILE" >/dev/null
+
+            sudo chown deployer:deployer "$ENV_FILE"
+            sudo chmod 0600 "$ENV_FILE"
+
+            echo "STEP 5: Logging in to Docker Hub"
+            printf '%s' "$DOCKERHUB_TOKEN" |
+              sudo -u deployer docker login \
+                --username "$DOCKERHUB_USERNAME" --password-stdin
+
+            echo "STEP 6: Validating Compose configuration"
+            sudo -u deployer docker compose \
+              -p team-c-production --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" config -q
+
+            echo "STEP 7: Pulling production images"
+            sudo -u deployer docker compose \
+              -p team-c-production --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" pull
+
+            echo "STEP 8: Starting production containers"
+            sudo -u deployer docker compose \
+              -p team-c-production --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" up -d
+
+            echo "STEP 9: Checking container status"
+            sleep 30
+            sudo -u deployer docker compose \
+              -p team-c-production --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" ps
+
+            echo "STEP 10: Checking backend health"
+            sudo -u deployer docker compose \
+              -p team-c-production --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" exec -T backend \
+              wget -qO- http://localhost:5000/api/health
+
+            echo
+            echo "Production deployment and backend health check completed."
+            echo "Image tag: $IMAGE_TAG"
