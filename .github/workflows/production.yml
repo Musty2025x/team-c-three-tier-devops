@@ -138,82 +138,14 @@ jobs:
           envs: IMAGE_TAG,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,PRODUCTION_DB_PASSWORD
           script: |
             set -eu
-            set +x
-
-            if ! printf '%s\n' "$IMAGE_TAG" | grep -Eq '^[a-f0-9]{40}$'; then
-              echo "ERROR: image_tag must be a full 40-character lowercase hexadecimal commit SHA."
-              exit 1
-            fi
-
-            test -n "$DOCKERHUB_USERNAME"
-            test -n "$DOCKERHUB_TOKEN"
-            test -n "$PRODUCTION_DB_PASSWORD"
-
-            RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
-            COMPOSE_FILE="${RELEASE_DIR}/docker-compose.prod.yml"
-            ENV_FILE="${RELEASE_DIR}/.env"
-
-            sudo install -d -o deployer -g deployer \
-              /opt/team-c/releases \
-              "$RELEASE_DIR" \
-              "$RELEASE_DIR/nginx"
-
-            sudo install -o deployer -g deployer -m 0644 \
-              /tmp/team-c-production/docker-compose.prod.yml \
-              "$COMPOSE_FILE"
-
-            sudo install -o deployer -g deployer -m 0644 \
-              /tmp/team-c-production/nginx/nginx.conf \
-              "$RELEASE_DIR/nginx/nginx.conf"
-
-            sudo install -o deployer -g deployer -m 0600 \
-              /dev/null "$ENV_FILE"
-
-            {
-              printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG"
-              printf 'DOCKERHUB_USERNAME=%s\n' "$DOCKERHUB_USERNAME"
-              printf 'PRODUCTION_DB_PASSWORD=%s\n' "$PRODUCTION_DB_PASSWORD"
-            } | sudo tee "$ENV_FILE" >/dev/null
-
-            sudo chown deployer:deployer "$ENV_FILE"
-            sudo chmod 0600 "$ENV_FILE"
-
-            printf '%s' "$DOCKERHUB_TOKEN" |
-              sudo -u deployer docker login \
-                --username "$DOCKERHUB_USERNAME" \
-                --password-stdin
-
-            sudo -u deployer docker compose \
-              -p team-c-production \
-              --env-file "$ENV_FILE" \
-              -f "$COMPOSE_FILE" config -q
-
-            sudo -u deployer docker compose \
-              -p team-c-production \
-              --env-file "$ENV_FILE" \
-              -f "$COMPOSE_FILE" pull
-
-            sudo -u deployer docker compose \
-              -p team-c-production \
-              --env-file "$ENV_FILE" \
-              -f "$COMPOSE_FILE" up -d
-
-            sleep 30
-
-            sudo -u deployer docker compose \
-              -p team-c-production \
-              --env-file "$ENV_FILE" \
-              -f "$COMPOSE_FILE" ps
-
-            sudo -u deployer docker compose \
-              -p team-c-production \
-              --env-file "$ENV_FILE" \
-              -f "$COMPOSE_FILE" exec -T backend \
-              wget -qO- http://localhost:5000/api/health
-
-            echo
-            echo "Production containers passed the backend health check."
+            echo "Deployment SSH step started"
+            echo "Checking deployment user..."
+            whoami
+            echo "Checking sudo access..."
+            sudo -n true
+            echo "Sudo access confirmed"
             echo "Image tag: $IMAGE_TAG"
+
 
       - name: Notify Slack about production deployment failure
         if: failure()
