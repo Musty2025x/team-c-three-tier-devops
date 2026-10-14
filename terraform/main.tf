@@ -160,7 +160,7 @@ resource "aws_iam_instance_profile" "ec2" {
 }
 
 resource "aws_key_pair" "ssh-key" {
-  key_name   = "server-key"
+  key_name   = "team-c-three-tier-deployer"
   public_key = file(var.public_key_location)
 }
 

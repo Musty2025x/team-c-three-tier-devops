@@ -25,6 +25,11 @@ variable "public_key_location" {
   type        = string
 }
 
+variable "private_key_location" {
+  description = "Path to the private SSH key file"
+  type        = string
+}
+
 variable "allowed_ssh_cidr" {
   description = "CIDR allowed to SSH to EC2"
   type        = string
