@@ -137,7 +137,7 @@ resource "aws_security_group" "ec2" {
 }
 
 resource "aws_iam_role" "ec2" {
-  name = "${var.project_name}-ec2-role"
+  name = "${var.project_name}-ec2-role-01"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -155,7 +155,7 @@ resource "aws_iam_role_policy_attachment" "cloudwatch" {
 }
 
 resource "aws_iam_instance_profile" "ec2" {
-  name = "${var.project_name}-instance-profile"
+  name = "${var.project_name}-instance-profile_01"
   role = aws_iam_role.ec2.name
 }
 
