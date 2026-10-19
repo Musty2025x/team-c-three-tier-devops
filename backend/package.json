@@ -11,9 +11,9 @@
     "audit": "npm audit --audit-level=high"
   },
   "dependencies": {
+    "@prometheus-io/client": "^0.16.1",
     "express": "^5.1.0",
-    "pg": "^8.16.3",
-    "prom-client": "^15.1.3"
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "eslint": "^9.35.0",

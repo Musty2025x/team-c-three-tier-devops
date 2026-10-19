@@ -1,6 +1,6 @@
 import express from "express";
 import pg from "pg";
-import client from "prom-client";
+import client from "@prometheus-io/client";
 
 const { Pool } = pg;
 const app = express();
