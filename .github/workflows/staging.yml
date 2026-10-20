@@ -210,19 +210,31 @@ jobs:
             sudo -n chown -R deployer:deployer "$RELEASE_DIR"
 
             echo "Verifying installed files..."
-            test -f "$RELEASE_DIR/docker-compose.yml"
-            test -f "$RELEASE_DIR/nginx.conf"
-            test -f "$RELEASE_DIR/monitoring/prometheus/prometheus.yml"
-            test -f "$RELEASE_DIR/monitoring/prometheus/alerts.yml"
-            test -f "$RELEASE_DIR/monitoring/alertmanager/alertmanager.yml"
-            test -f "$RELEASE_DIR/monitoring/grafana/dashboards/team-c.json"
+            find "$RELEASE_DIR/monitoring" -type f -print
+
+            for file in \
+              "$RELEASE_DIR/docker-compose.yml" \
+              "$RELEASE_DIR/nginx.conf" \
+              "$RELEASE_DIR/monitoring/prometheus/prometheus.yml" \
+              "$RELEASE_DIR/monitoring/prometheus/alerts.yml" \
+              "$RELEASE_DIR/monitoring/alertmanager/alertmanager.yml" \
+              "$RELEASE_DIR/monitoring/grafana/dashboards/team-c.json"
+            do
+              if [ ! -f "$file" ]; then
+               echo "ERROR: Missing required file: $file"
+               exit 1
+             fi
+            done
+
             test -x /opt/team-c/scripts/staging-rollback.sh
+            echo "All release files verified successfully."
 
             echo "Release files prepared successfully."
             echo "Rollback script installed and executable."
             echo "Release directory: $RELEASE_DIR"
 
       - name: Deploy application and monitoring
+        id: deploy_staging
         uses: appleboy/ssh-action@v1.2.0
         env:
           IMAGE_TAG: ${{ steps.set_image_tag.outputs.image_tag }}
@@ -491,7 +503,7 @@ jobs:
             echo "========== END DIAGNOSTICS =========="
 
       - name: Roll back failed staging deployment
-        if: failure()
+        if: failure() && steps.deploy_staging.outcome == 'failure'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.STAGING_HOST }}
