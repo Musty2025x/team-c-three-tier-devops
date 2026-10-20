@@ -226,7 +226,7 @@ jobs:
              fi
             done
 
-            test -x /opt/team-c/scripts/staging-rollback.sh
+            sudo -n -u deployer test -x /opt/team-c/scripts/staging-rollback.sh
             echo "All release files verified successfully."
 
             echo "Release files prepared successfully."
