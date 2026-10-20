@@ -107,6 +107,17 @@ jobs:
           key: ${{ secrets.STAGING_SSH_KEY }}
           source: monitoring-config.tar.gz
           target: /tmp/team-c-monitoring
+      
+      - name: Copy staging rollback script
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          source: scripts/staging-rollback.sh
+          target: /tmp/team-c-scripts
+          strip_components: 1
+
       - name: Prepare staging release
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -119,55 +130,85 @@ jobs:
           envs: IMAGE_TAG
           script: |
             set -eu
+
             echo "========== STAGING PREPARATION =========="
             echo "SSH user: $(whoami)"
             echo "Host: $(hostname)"
             hostname -I || true
+
             if [ -z "${IMAGE_TAG:-}" ]; then
               echo "ERROR: IMAGE_TAG was not passed to the remote host."
               exit 1
             fi
+
             echo "Image tag: $IMAGE_TAG"
+
             echo "Checking transferred files..."
             test -f /tmp/team-c-deploy/deploy/staging/docker-compose.yml
             test -f /tmp/team-c-nginx/nginx.conf
             test -f /tmp/team-c-monitoring/monitoring-config.tar.gz
+            test -f /tmp/team-c-scripts/staging-rollback.sh
             echo "Transferred files verified."
+
             echo "Checking sudo access..."
             sudo -n true
+
             echo "Checking deployer account..."
             if ! id deployer >/dev/null 2>&1; then
               sudo -n useradd -m -s /bin/bash deployer
             fi
+
             if ! getent group docker >/dev/null 2>&1; then
               echo "ERROR: Docker group does not exist."
               exit 1
             fi
+
             sudo -n usermod -aG docker deployer
             id deployer
+
             echo "Checking Docker access..."
             sudo -n -u deployer docker ps
             sudo -n -u deployer docker compose version
+
             echo "Preparing release directories..."
-            sudo -n mkdir -p /opt/team-c/releases /opt/team-c/shared
+            sudo -n mkdir -p \
+              /opt/team-c/releases \
+              /opt/team-c/shared \
+              /opt/team-c/scripts
+
             sudo -n chown deployer:deployer /opt/team-c
             sudo -n chown deployer:deployer /opt/team-c/releases
             sudo -n chown deployer:deployer /opt/team-c/shared
+            sudo -n chown deployer:deployer /opt/team-c/scripts
+
             RELEASE_DIR="/opt/team-c/releases/${IMAGE_TAG}"
             sudo -n -u deployer mkdir -p "$RELEASE_DIR"
+
             echo "Installing Compose file..."
             sudo -n cp \
               /tmp/team-c-deploy/deploy/staging/docker-compose.yml \
               "$RELEASE_DIR/docker-compose.yml"
+
             echo "Installing Nginx configuration..."
             sudo -n cp \
               /tmp/team-c-nginx/nginx.conf \
               "$RELEASE_DIR/nginx.conf"
+
             echo "Installing monitoring configuration..."
             sudo -n tar -xzf \
               /tmp/team-c-monitoring/monitoring-config.tar.gz \
               -C "$RELEASE_DIR"
+
+            echo "Installing staging rollback script..."
+            sudo -n install \
+              -o deployer \
+              -g deployer \
+              -m 750 \
+              /tmp/team-c-scripts/staging-rollback.sh \
+              /opt/team-c/scripts/staging-rollback.sh
+
             sudo -n chown -R deployer:deployer "$RELEASE_DIR"
+
             echo "Verifying installed files..."
             test -f "$RELEASE_DIR/docker-compose.yml"
             test -f "$RELEASE_DIR/nginx.conf"
@@ -175,8 +216,12 @@ jobs:
             test -f "$RELEASE_DIR/monitoring/prometheus/alerts.yml"
             test -f "$RELEASE_DIR/monitoring/alertmanager/alertmanager.yml"
             test -f "$RELEASE_DIR/monitoring/grafana/dashboards/team-c.json"
+            test -x /opt/team-c/scripts/staging-rollback.sh
+
             echo "Release files prepared successfully."
+            echo "Rollback script installed and executable."
             echo "Release directory: $RELEASE_DIR"
+
       - name: Deploy application and monitoring
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -372,6 +417,32 @@ jobs:
             echo "Image tag: $IMAGE_TAG"
             echo "Release directory: $RELEASE_DIR"
             echo "========================================="
+
+      - name: Record known-good staging release
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_TAG: ${{ steps.set_image_tag.outputs.image_tag }}
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: IMAGE_TAG
+          script: |
+            set -eu
+
+            test -n "${IMAGE_TAG:-}"
+
+            printf '%s\n' "$IMAGE_TAG" |
+              sudo -n tee /opt/team-c/staging-known-good-tag >/dev/null
+
+            sudo -n chown deployer:deployer \
+              /opt/team-c/staging-known-good-tag
+
+            sudo -n chmod 600 \
+              /opt/team-c/staging-known-good-tag
+
+            echo "Known-good staging SHA recorded: $IMAGE_TAG" 
+
       - name: Diagnose staging deployment failure
         if: failure()
         uses: appleboy/ssh-action@v1.2.0
@@ -418,6 +489,21 @@ jobs:
               fi
             fi
             echo "========== END DIAGNOSTICS =========="
+
+      - name: Roll back failed staging deployment
+        if: failure()
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -eu
+            echo "Attempting staging rollback..."
+            sudo -n -u deployer bash \
+              /opt/team-c/scripts/staging-rollback.sh
+
       - name: Notify Slack about staging deployment failure
         if: failure()
         uses: slackapi/slack-github-action@v2
