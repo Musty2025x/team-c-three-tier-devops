@@ -1,133 +1,230 @@
-# Team C — Three-Tier Containerized App with Full CI/CD
+# Team C — Three-Tier DevOps Project
 
-A recruiter-ready DevOps project that takes a small React + Node/Express + PostgreSQL application from source code to AWS EC2 with automated CI/CD, security scanning, staging/production promotion, monitoring, alerting and rollback.
+> **Project:** Ship and Operate a Containerized Application with a Full CI/CD Pipeline  
+> **Goal:** Automate infrastructure provisioning, application delivery, health validation, monitoring, alerting, and staging rollback.
 
-## Open-source application base
+## Table of Contents
 
-The application follows the architecture of the open-source project [dockerized-multi-service-app](https://github.com/Hacker3S/dockerized-multi-service-app), which demonstrates a React frontend, Node.js backend, PostgreSQL database and Nginx reverse proxy. This repository keeps the application intentionally small so the focus remains on the DevOps work.
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Technology Stack](#technology-stack)
+- [Repository Structure](#repository-structure)
+- [Local Build and Deployment with Docker Desktop](#local-build-and-deployment-with-docker-desktop)
+- [CI/CD Workflow](#cicd-workflow)
+- [Monitoring and Alerting](#monitoring-and-alerting)
+- [Rollback and Recovery](#rollback-and-recovery)
+- [Setup and Usage](#setup-and-usage)
+- [Screenshot Evidence](#screenshot-evidence)
+- [Challenges and Lessons Learned](#challenges-and-lessons-learned)
+- [Security Notes](#security-notes)
+- [Future Improvements](#future-improvements)
+
+---
+
+## Overview
+
+This project demonstrates a containerized application delivery workflow using Infrastructure as Code, CI/CD automation, and monitoring tools. Docker images are deployed with Docker Compose to AWS EC2 environments.
+
+The project demonstrates:
+
+- Infrastructure provisioning with Terraform.
+- CI/CD automation with GitHub Actions.
+- Containerized frontend, backend API, and PostgreSQL services.
+- Nginx as the public HTTP entry point.
+- Metrics collection with Prometheus and dashboards in Grafana.
+- Alert routing through Alertmanager to Slack.
+- Deployment health checks and rollback to a known-good staging release.
 
 ## Architecture
 
 ```text
-                         GitHub
-                           |
-                    Pull Request / Push
-                           |
-                           v
-                 +---------------------+
-                 |   GitHub Actions    |
-                 |---------------------|
-                 | Lint + Tests        |
-                 | npm audit           |
-                 | Trivy FS/screenshots/image scan |
-                 | Docker build/push   |
-                 +----------+----------+
-                            |
-                            v
-                       Docker Hub
-                            |
-                    merge to main
-                            |
-                            v
-                 +---------------------+
-                 |    STAGING EC2      |
-                 |---------------------|
-                 | Nginx               |
-                 | React frontend      |
-                 | Node API            |
-                 | PostgreSQL          |
-                 | Prometheus          |
-                 | Grafana             |
-                 | Alertmanager        |
-                 +----------+----------+
-                            |
-                     GitHub approval
-                            |
-                            v
-                 +---------------------+
-                 |  PRODUCTION EC2     |
-                 |---------------------|
-                 | Nginx               |
-                 | React frontend      |
-                 | Node API            |
-                 | PostgreSQL          |
-                 | Prometheus          |
-                 | Grafana             |
-                 | Alertmanager        |
-                 +----------+----------+
-                            |
-                            v
-                     Discord / Slack
+Developer writes code
+   |
+   v
+Docker Desktop: build images locally
+   |
+   v
+Run locally with Docker Compose
+   |
+   v
+Test frontend, API, database connection, and logs
+   |
+   | tests pass
+   v
+Commit and push to GitHub
+   |
+   v
+GitHub Actions CI
+   |
+   v
+Build/validate and publish Docker images
+   |
+   v
+Docker Hub
+   |
+   v
+GitHub Actions deployment workflow
+   |
+   v
+AWS EC2 (Staging)
+   |
+   +--> Nginx --> Frontend
+   |             |
+   |             +--> Backend API --> PostgreSQL
+   |
+   +--> Prometheus --> Grafana
+          |
+          v
+      Alertmanager --> Slack
 ```
 
-## Repository structure
+Terraform provisions the AWS resources described in the repository's Terraform configuration. Check the current Terraform files for the exact resources and settings.
+
+### Architecture diagram screenshot
+
+![Project architecture diagram](docs/screenshots/architecture.png)
+
+## Technology Stack
+
+| Area | Technology | Purpose |
+|---|---|---|
+| Source control | Git, GitHub | Version control and collaboration |
+| CI/CD | GitHub Actions | Validation, image publishing, staging deployment and failure handling |
+| Infrastructure as Code | Terraform | Provision AWS infrastructure |
+| Cloud | AWS EC2 | Hosts application and monitoring services |
+| Containers | Docker, Docker Compose | Packages and runs services |
+| Image registry | Docker Hub | Stores frontend and backend images |
+| Web entry point | Nginx | Public HTTP entry point |
+| Database | PostgreSQL | Persistent application data |
+| Metrics | Prometheus | Scrapes application and monitoring targets |
+| Dashboards | Grafana | Visualizes monitoring data |
+| Alerting | Alertmanager | Routes Prometheus alerts |
+| Notifications | Slack | Receives deployment and monitoring notifications |
+
+## Repository Structure
+
+Representative structure; update it if the repository changes.
 
 ```text
-.
-├── frontend/                     # React/Vite UI
-├── backend/                      # Express API + Prometheus metrics
-├── database/                     # PostgreSQL initialization
-├── nginx/                        # Reverse proxy
+team-c-three-tier-devops/
+├── .github/
+│   └── workflows/
+│       └── staging.yml
+├── deploy/
+│   ├── staging/
+│   │   └── docker-compose.yml
+│   └── production/
+│       └── docker-compose.yml
 ├── monitoring/
-│   ├── prometheus/
 │   ├── alertmanager/
-│   └── grafana/
+│   │   └── alertmanager.yml
+│   ├── grafana/
+│   │   ├── dashboards/
+│   │   │   └── team-c.json
+│   │   └── provisioning/
+│   └── prometheus/
+│       ├── alerts.yml
+│       └── prometheus.yml
 ├── scripts/
-│   ├── deploy.sh
-│   ├── rollback.sh
-│   └── health-check.sh
+│   └── staging-rollback.sh
 ├── terraform/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── user_data.sh.tftpl
-│   └── backend.tf.example
-├── .github/workflows/
-│   ├── ci.yml
-│   ├── staging.yml
-│   └── production.yml
-├── docker-compose.yml
-└── docker-compose.prod.yml
+├── README.md
+└── docs/
+    └── screenshots/
 ```
 
-## Prerequisites
+The staging workflow generates `monitoring-config.tar.gz` from `monitoring/`. If the workflow creates this archive automatically, it is a deployment artifact and normally does not need to be committed.
 
-- AWS account
-- Terraform >= 1.6
-- Docker Desktop
-- GitHub repository
-- Docker Hub account
-- SSH key pair for the EC2 instances
-- Discord or Slack webhook for alerting
+## Local Build and Deployment with Docker Desktop
+
+Use Docker Desktop to build and run the application locally before pushing changes to GitHub or deploying to AWS. This gives you an early way to catch Dockerfile, image-build, configuration, and container-startup problems.
+
+#### Prerequisites
+
+- Docker Desktop installed and running.
+- Docker Compose v2 available through Docker Desktop.
+- The project's frontend and backend source code and Dockerfiles available locally.
+- A local Compose file configured with `build:` contexts for the application services.
+
+Open Docker Desktop and wait until its engine reports that it is running. In Git Bash, confirm the CLI can reach the engine:
+
+```bash
+docker --version
+docker compose version
+docker info
+```
+
+If `docker info` cannot connect, start Docker Desktop and wait for the engine to finish starting before continuing.
+
+### Clone the repository
+
+```bash
+git clone https://github.com/Musty2025x/team-c-three-tier-devops.git
+cd team-c-three-tier-devops
+```
+
+#### Build the application images locally
+
+From the repository root, inspect the available Compose files and Dockerfiles first:
+
+```bash
+find . -maxdepth 4 \\( -iname 'Dockerfile' -o -iname '*compose*.yml' -o -iname '*compose*.yaml' \\) -print
+```
+
+Use a local Compose file that defines `build:` for the frontend and backend. For example, if your local Compose file is named `docker-compose.local.yml`:
+
+```bash
+docker compose -f docker-compose.local.yml config
+docker compose -f docker-compose.local.yml build
+```
+
+The Compose file's `build.context` and `dockerfile` paths must match the actual repository layout. Do not run this example until `docker-compose.local.yml` exists and has been configured for local builds.
+
+If the project does not yet have a local Compose file, create one based on the current app layout. The key pattern for each application service is:
+
+```yaml
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # Add the environment variables and network settings
+    # required by the backend and its database.
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    # Add the required frontend configuration.
+```
+
+This is a template, not a drop-in Compose file: update the build contexts, service settings, ports, networks, database service, and environment variables to match the actual source code. Keep the database on the internal Compose network and do not commit credentials.
 
 ## build Frontend and backend
 ```bash
 cd frontend
+npm install
 npm run lint
 npm run build
 
 cd backend
+npm install
 npm run lint
 ```
-## output screenshot for frontend and backend build
-![alt text](screenshots/image.png)
-![alt text](screenshots/image-1.png)
-![alt text](screenshots/image-2.png)
 
-## Local development
+#### Start and test the local application
+
+After the local Compose file is configured, build and start the services:
 
 ```bash
 cd ..
 cp .env.example .env
-docker compose up --build
-docker ps
+docker compose -f docker-compose.yml up -d --build
+docker compose ps
+docker compose -f docker-compose.yml logs --tail=100
 ```
 
-## Screenshot of active running container
-![alt text](screenshots/image-3.png)
-
-
-Open:
+Use the local ports defined in your Compose configuration to open the application in a browser. If the backend exposes a health endpoint through the local web entry point, test it using the matching local port, for example:
 
 - App: http://localhost
 - API health: http://localhost/api/health
@@ -136,50 +233,117 @@ Open:
 - Alertmanager: http://localhost:9093
 - Grafana: http://localhost:3000
 
-Default local Grafana credentials:
+Only use that exact URL if your local Compose configuration publishes Nginx on port 80 and routes `/api/health` to the backend. Otherwise, adjust the URL to the actual local port and route.
 
-```text
-admin / admin
+To stop the local stack without deleting persistent volumes:
+
+```bash
+docker compose -f docker-compose.yml down
 ```
 
-Change these for anything beyond local development.
+Avoid `docker compose down -v` unless you intentionally want to delete the local database volume and its data.
 
-## Screenshot of app runing locally via url
-![alt text](screenshots/image-4.png)
-![alt text](screenshots/image-5.png)
-![alt text](screenshots/image-6.png)
-![alt text](screenshots/image-7.png)
-![alt text](screenshots/image-8.png)
-![alt text](screenshots/image-9.png)
+#### Verify the build in Docker Desktop
 
+Open Docker Desktop and check:
 
-## CI/CD flow
+- **Containers:** frontend, backend, and database containers are running.
+- **Images:** locally built frontend and backend images appear in the image list.
+- **Logs:** application containers start without repeated crash or connection errors.
+- **Ports:** the published local ports match the Compose configuration.
+- **Application:** the frontend loads and the health endpoint returns the expected response.
 
-### Pull request
+> **Screenshot evidence:**
 
-Every PR runs:
+![Local containers running in Docker Desktop](docs/screenshots/docker-desktop-local-containers.png)
 
-1. Backend lint
-2. Frontend lint
-3. Backend unit tests
-4. Frontend build
-5. Dependency vulnerability check
-6. Docker screenshots/image builds
-7. Trivy filesystem scan
-8. Trivy screenshots/image scan
+![Locally built application images in Docker Desktop](docs/screenshots/docker-desktop-images.png)
 
-### Merge to main
+#### Recommended development-to-deployment flow
 
-A merge to `main`:
+1. Make a code change locally.
+2. Build the frontend and backend images with Docker Desktop.
+3. Start the local Compose stack and test the application.
+4. Review container logs and verify the health endpoint.
+5. Commit and push the tested code to GitHub.
+6. Let GitHub Actions run CI and the staging deployment workflow.
+7. Verify the staging deployment and monitoring dashboards.
 
-1. Builds the application screenshots/images.
-2. Pushes immutable Git-SHA tags to Docker Hub.
-3. Deploys automatically to staging.
-4. Runs a staging health check.
-5. Waits for GitHub Environment approval.
-6. Deploys the exact same screenshots/image tags to production.
+Local Docker Desktop testing is a development check; it does not replace the GitHub Actions CI checks or staging health checks.
 
-No manual SSH deployment is required.
+## CI/CD Workflow
+
+This stage starts **after local Docker Desktop build and testing**. Only push changes after the local application has been built and checked.
+
+1. A developer commits and pushes locally tested changes to GitHub.
+2. GitHub Actions runs the validation steps configured in the workflow.
+3. The pipeline builds application images and publishes them to Docker Hub using configured image tags.
+4. The staging workflow packages and transfers the Compose and monitoring configuration.
+5. The workflow connects to the staging EC2 instance and deploys with Docker Compose.
+6. Health checks validate the deployment.
+7. After a successful deployment, the workflow records the known-good staging image tag.
+8. If deployment checks fail, diagnostics run and the rollback script attempts to restore the known-good release.
+9. GitHub Actions sends deployment-failure notifications to Slack. Prometheus alerts are separately routed through Alertmanager.
+
+## Setup and Usage
+
+### Prerequisites
+
+- Git
+- Docker and Docker Compose
+- AWS account and credentials configured for Terraform
+- Terraform CLI
+- GitHub repository with Actions enabled
+- Docker Hub account and repository access
+- SSH access to the target EC2 instance
+- GitHub Actions secrets and environment variables required by the current workflow
+
+### Clone the repository
+
+```bash
+git clone https://github.com/Musty2025x/team-c-three-tier-devops.git
+cd team-c-three-tier-devops
+cd terraform
+```
+
+### Terraform validation
+
+First change into the directory containing the intended Terraform configuration and review its backend, variables, AWS account, region, and expected costs.
+
+```bash
+terraform init
+terraform fmt -check
+terraform validate
+terraform plan
+```
+
+Get outputs:
+
+```bash
+terraform output
+```
+
+Only apply after reviewing the plan:
+
+```bash
+terraform apply
+```
+
+Do not run Terraform from an arbitrary directory. Use the correct Terraform working directory and backend configuration.
+
+### Inspect the Compose configuration
+
+```bash
+docker compose -f deploy/staging/docker-compose.yml config
+```
+
+The required environment file and variables depend on the current Compose configuration. Never commit production credentials.
+
+### GitHub Actions configuration
+
+Configure the repository/environment secrets required by the current workflow. Never put secret values in this README.
+
+Before deployment, verify that the image tag exists in Docker Hub, the target environment is correct, required secrets are configured, Compose validation succeeds, and the rollback state points to a known-good release.
 
 ## GitHub configuration
 
@@ -276,30 +440,11 @@ terraform {
 
 Do not commit Terraform state or AWS credentials.
 
-## Terraform
-
-```bash
-cd terraform
-
-terraform init
-terraform fmt -check
-terraform validate
-terraform plan
-terraform apply
-```
-
-Get outputs:
-
-```bash
-terraform output
-```
-
 Destroy when finished:
 
 ```bash
-terraform destroy
+terraform destroy -auto-approve
 ```
-
 ## Deployment
 
 The deployment workflow copies the production compose files and environment file to EC2, then executes:
@@ -329,190 +474,210 @@ cd /opt/team-c
 
 The script reads the last known-good release and redeploys those screenshots/image tags.
 
-## Monitoring
+### Successful CI/CD screenshot
 
-Prometheus scrapes:
+Save as `docs/screenshots/github-actions-success.png`.
 
-- API request count
-- API error count
-- API request duration
-- Node exporter CPU/memory/disk/network
-- Prometheus itself
+![Successful GitHub Actions pipeline](docs/screenshots/github-actions-success.png)
 
-Grafana provides:
+### Docker Hub screenshot
 
-- CPU usage
-- Memory usage
-- Request rate
-- Error rate
-- API latency
+Save as `docs/screenshots/dockerhub-images.png`.
 
-Alertmanager sends a notification when one of these alerts fires:
+![Docker Hub images and tags](docs/screenshots/dockerhub-images.png)
 
-```text
-BackendDown
-PrometheusDown
-AlertmanagerDown
-HighErrorRate
+## Deployment and Health Checks
+
+Run on the staging EC2 instance:
+
+ssh into the staging EC2 instance and check that the backend is running and healthy:
+
+```bash
+ssh -i <staging-ssh-key> <staging-ssh-user>@<staging-host>
+ssh -i "team-c-three-tier-deployer.pem" ubuntu@ec2-44-197-190-142.compute-1.amazonaws.com
+curl -i http://localhost/api/health
 ```
 
-These runtime alerts are configured in the staging monitoring stack. GitHub
-Actions independently sends Slack notifications for failed CI pushes to `main`
-and failed staging/production deployments. Production runtime monitoring is not
-included in the production Compose stack.
+A successful response should return HTTP `200` with the backend health information. A health endpoint alone does not prove every application feature works; test application functionality and database schema as well.
 
-## Failure demo
-
-For the presentation:
-
-1. Deploy a known-bad backend image to staging.
-2. API health check fails.
-3. Prometheus detects the failure.
-4. Alertmanager sends Discord/Slack notification.
-5. Run the rollback script.
-6. Verify `/api/health` returns HTTP 200.
-7. Show the dashboard recovering.
-
-## Runbook — deployment failure
-
-### 1. Check deployment
+Useful Docker Compose checks (run from the correct release directory and with the relevant environment file):
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 backend
-docker compose logs --tail=100 nginx
 ```
 
-### 2. Check health
+Nginx is intended to be the public entry point. Avoid publishing backend or database ports directly to the internet without a documented requirement.
+
+### Staging application screenshot
+
+![Staging application after deployment](docs/screenshots/staging-application.png)
+
+## Monitoring and Alerting
+
+Prometheus scrapes the backend, Prometheus itself, Alertmanager, and Node Exporter. Grafana provides dashboards, while Alertmanager routes alerts to Slack.
+
+### Configured alert rules
+
+| Alert | Condition | Pending period | Severity |
+|---|---|---:|---|
+| `BackendDown` | `up{job="backend"} == 0` | 60 seconds | Critical |
+| `PrometheusDown` | `up{job="prometheus"} == 0` | 60 seconds | Critical |
+| `AlertmanagerDown` | `up{job="alertmanager"} == 0` | 60 seconds | Critical |
+| `HighErrorRate` | HTTP 5xx responses exceed 5% of requests | 5 minutes | Warning |
+
+These reflect the alert rules observed during testing. Keep this table synchronized with `monitoring/prometheus/alerts.yml`.
+
+### Monitoring verification commands
 
 ```bash
-curl -f http://localhost/api/health
+# Prometheus scrape targets
+curl -s http://localhost:9090/api/v1/targets
+
+# Prometheus alert rules
+curl -s http://localhost:9090/api/v1/rules
+
+# Current Prometheus alerts
+curl -s http://localhost:9090/api/v1/alerts
+
+# Alertmanager active alerts
+curl -s http://localhost:9093/api/v2/alerts
 ```
 
-### 3. Check the screenshots/image
+Append `| jq .` to format JSON if `jq` is installed.
+
+### Grafana dashboard screenshot
+Grafana container is bound to 127.0.0.1:3000, so it isn't directly accessible over the public internet.
 
 ```bash
-docker screenshots/images
-docker inspect team-c-backend
+ssh -i ~/.ssh/team-c-three-tier-deployer \
+  -L 3000:127.0.0.1:3000 \
+  ubuntu@YOUR_STAGING_PUBLIC_IP
 ```
+Then open `http://localhost:3000` in a browser and log in with the configured Grafana credentials.
 
-### 4. Roll back
+![Grafana dashboard](docs/screenshots/grafana-dashboard.png)
+
+### Prometheus targets screenshot
+
+prometheus targets can be viewed in the Prometheus web UI at `http://localhost:9090/targets`. The targets page shows the scrape status, last scrape time, and any errors.
 
 ```bash
-cd /opt/team-c
-./rollback.sh
+ssh -i ~/.ssh/team-c-three-tier-deployer \
+  -L 9090:127.0.0.1:9090 \
+  ubuntu@YOUR_STAGING_PUBLIC_IP
 ```
+Then open `http://localhost:9090/targets` in a browser.
 
-### 5. Verify
+![Prometheus targets](docs/screenshots/prometheus-targets.png)
+
+### Slack monitoring alert screenshot
+Slack receives Prometheus alerts routed through Alertmanager. The `BackendDown` alert is triggered when the backend service is unreachable.
+
+Trigger a `BackendDown` alert by stopping the backend container on the staging EC2 instance:
 
 ```bash
-curl -f http://localhost/api/health
-docker compose ps
-```
-
-### 6. Investigate before redeploying
-
-Check:
-
-- GitHub Actions logs
-- Trivy findings
-- container logs
-- environment variables
-- database connectivity
-- disk space
-- memory pressure
-- Grafana/Prometheus
-
-## 15–20 minute presentation
-
-### 1. Problem — 2 minutes
-
-Manual deployments are slow, inconsistent and easy to break.
-
-### 2. Architecture — 3 minutes
-
-Explain GitHub → CI → Docker Hub → staging → approval → production → monitoring.
-
-### 3. Live demo — 7 minutes
-
-Make a small UI change:
-
-```text
-git checkout -b feature/demo-change
-git add .
-git commit -m "feat: update dashboard message"
-git push
-```
-
-Open the PR and show CI.
-
-Merge it and show automatic staging deployment.
-
-Approve production and show the same screenshots/image SHA running in production.
-
-Open Grafana.
-
-### 4. Failure demo — 3 minutes
-
-Break the backend.
-
-Show:
-
-```text
-API DOWN
-   ↓
-Prometheus
-   ↓
-Alertmanager
-   ↓
-Discord/Slack
-   ↓
-Rollback
-   ↓
-API HEALTHY
-```
-### 4b. Stimulate a backend outrage in your staging compose stack
-Stop the backend service using the same Compose file and environment file as your deployment:
-```bash
-ls -lah /opt/team-c/releases/ 
 sudo -u deployer docker compose \
-  --env-file /opt/team-c/releases/DIRECTORY_TAG/.env \
-  -f /opt/team-c/releases/DIRECTORY_TAG/docker-compose.yml \
+  -p team-c-staging \
+  --env-file /opt/team-c/releases/git-sha/.env \
+  -f /opt/team-c/releases/git-sha/docker-compose.yml \
   stop backend
 ```
-
-### 5. Lessons — 3 minutes
-
-Discuss:
-
-- immutable screenshots/image tags
-- automated tests
-- DevSecOps
-- infrastructure as code
-- environment promotion
-- observability
-- rollback
-- secrets management
-
-### 6. Q&A
-
-## Portfolio talking points
-
-Use these points on your CV/LinkedIn only after you have actually deployed and tested them:
-
-- Built an end-to-end GitHub Actions CI/CD pipeline for a containerized three-tier application.
-- Provisioned AWS infrastructure with Terraform and remote state in S3.
-- Implemented Docker screenshots/image vulnerability scanning with Trivy and dependency checks.
-- Automated staging deployment and gated production promotion using GitHub Environments.
-- Implemented Prometheus/Grafana observability for infrastructure and application metrics.
-- Configured Alertmanager notifications for application downtime.
-- Implemented Git-SHA screenshots/image versioning and automated rollback to the last known-good release.
-
-## Cleanup
-
-Always destroy the infrastructure after a training/demo session if you do not need it running:
+confirm backend is down:
 
 ```bash
-cd terraform
-terraform destroy
+curl -i http://localhost/api/health
 ```
+Restore the backend container after testing:
+
+```bash
+sudo -u deployer docker compose \
+  -p team-c-staging \
+  --env-file /opt/team-c/releases/git-sha/.env \
+  -f /opt/team-c/releases/git-sha/docker-compose.yml \
+  start backend
+```
+
+![Slack BackendDown alert](docs/screenshots/slack-backend-alert.png)
+
+The project test confirmed that a `BackendDown` alert was delivered to Slack through Prometheus/Alertmanager. A separate GitHub Actions notification was also delivered for a failed staging deployment.
+
+## Rollback and Recovery
+
+The staging workflow includes a rollback step that attempts to restore the last known-good release if deployment checks fail.
+
+During testing, the deliberately invalid image tag `rollback-demo-invalid` failed to pull. The rollback script restored the recorded known-good release and the staging health check succeeded.
+
+Known-good release observed during that test:
+
+```text
+7885d63caa8003826c0a3fe4bcd8dd2bb461737f
+```
+
+This identifies the test release and should not be treated as a permanent release identifier.
+
+**Important:** GitHub Actions triggers rollback when deployment checks fail. Prometheus and Alertmanager send monitoring notifications, but a Prometheus alert does not automatically trigger rollback in the current design.
+
+### Rollback workflow screenshot
+
+![Failed deployment and successful rollback](docs/screenshots/rollback-workflow.png)
+
+### Slack deployment failure screenshot
+
+![Slack deployment failure notification](docs/screenshots/slack-deployment-failure.png)
+
+
+## Screenshot Evidence
+
+| Evidence | Suggested filename | What it demonstrates |
+|---|---|---|
+| Architecture diagram | `architecture.png` | Components and traffic flow |
+| Docker Desktop local containers | `docker-desktop-local-containers.png` | Local Compose services are running |
+| Docker Desktop local images | `docker-desktop-images.png` | Frontend and backend images build locally |
+| Successful GitHub Actions run | `github-actions-success.png` | CI/CD completes |
+| Docker Hub images | `dockerhub-images.png` | Images and tags are published |
+| Staging application | `staging-application.png` | Application responds after deployment |
+| Grafana dashboard | `grafana-dashboard.png` | Metrics are visualized |
+| Prometheus targets | `prometheus-targets.png` | Scrape targets are healthy |
+| Slack monitoring alert | `slack-backend-alert.png` | Prometheus alert reaches Slack |
+| Rollback workflow | `rollback-workflow.png` | Failed deployment and recovery |
+| Slack deployment alert | `slack-deployment-failure.png` | Workflow failure notification reaches Slack |
+| Terraform provisioning | `terraform-provisioning.png` | Infrastructure provisioning evidence |
+
+## Challenges and Lessons Learned
+
+- **Deployment failures:** workflow logs and explicit validation steps help isolate issues.
+- **Image tagging:** traceable tags make releases easier to identify and roll back.
+- **Remote access:** SSH keys, user permissions, and remote shell behavior require careful configuration.
+- **Health checks:** container status alone is insufficient; verify HTTP behavior and database connectivity.
+- **Observability:** validate scrape targets, alert rules, Alertmanager routing, and actual notification delivery.
+- **Recovery:** preserve persistent database data and test rollback without destructive cleanup.
+- **Application correctness:** a healthy endpoint does not guarantee every feature or database table is available.
+
+## Security Notes
+
+- Never commit `.env` files containing secrets, SSH private keys, Docker Hub tokens, Slack webhooks, or database passwords.
+- Store sensitive GitHub Actions values in repository or environment secrets.
+- Restrict inbound security-group rules to required ports and sources.
+- Keep PostgreSQL and the backend API private unless external access is explicitly required.
+- Use least-privilege IAM policies and SSH access.
+- Redact sensitive values from screenshots and logs.
+- Review Terraform plans before applying changes and clean up unused cloud resources to control costs.
+
+## Future Improvements
+
+- Add integration tests and database migration validation.
+- Add a production deployment approval gate.
+- Use immutable release tags and retain a documented release history.
+- Add PostgreSQL backup and restore testing.
+- Improve dashboards with application-specific latency, request rate, and error metrics.
+- Test alert resolution and notification deduplication.
+- Consider a secrets manager for runtime credentials.
+- Document disaster recovery and rollback procedures.
+
+## Project Links
+
+- **GitHub repository:** https://github.com/Musty2025x/team-c-three-tier-devops
+- **Docker Hub backend image:** `musty101/team-c-backend`
+- **Docker Hub frontend image:** `musty101/team-c-frontend`
+
+> Update this README whenever the architecture, workflow, alert rules, deployment steps, or screenshots change. Verify repository paths and commands against the current code before describing the project as production-ready.
