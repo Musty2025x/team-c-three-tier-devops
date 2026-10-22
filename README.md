@@ -680,4 +680,4 @@ This identifies the test release and should not be treated as a permanent releas
 - **Docker Hub backend image:** `musty101/team-c-backend`
 - **Docker Hub frontend image:** `musty101/team-c-frontend`
 
-> Update this README whenever the architecture, workflow, alert rules, deployment steps, or screenshots change. Verify repository paths and commands against the current code before describing the project as production-ready.
+> Update this README.md whenever the architecture, workflow, alert rules, deployment steps, or screenshots change. Verify repository paths and commands against the current code before describing the project as production-ready.
